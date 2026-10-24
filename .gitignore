@@ -1,0 +1,12 @@
+# Go 构建产物与本地缓存
+.build/
+.gocache/
+.gomodcache/
+.gopath/
+build/
+
+# 本地参考资料（从已安装应用提取的专有内容，禁止分发）
+.dsh-ref/
+
+# macOS
+.DS_Store
