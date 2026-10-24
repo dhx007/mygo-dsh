@@ -20,6 +20,7 @@ type Config struct {
 	Mode         string          `json:"mode"`
 	EnabledTools map[string]bool `json:"enabled_tools,omitempty"`
 	AutoApprove  bool            `json:"auto_approve"`
+	Theme        string          `json:"theme"`
 }
 
 func defaultConfig() *Config {
@@ -31,6 +32,7 @@ func defaultConfig() *Config {
 		Temperature: 0.7,
 		MaxTokens:   8192,
 		Mode:        "标准",
+		Theme:       "暖黑",
 	}
 }
 

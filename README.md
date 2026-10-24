@@ -15,7 +15,7 @@
 | `/compact` 自动历史压缩 | ✅ `/compact` 用模型生成摘要替换历史，轨迹留痕 |
 | 子代理 / 规划 | ✅ `task` 工具（一层深子代理）；`todo` 工具渲染成任务清单卡片 |
 | 一切皆插件 | ✅ 插件页：11 个内置工具逐一开关，写入配置 |
-| 设置 → 模型（DeepSeek，DEEPSEEK_API_KEY） | ✅ 设置页：Key / Base URL / 模型 / 默认工作区 |
+| 设置 → 模型（DeepSeek，DEEPSEEK_API_KEY） | ✅ 模态设置子窗口（打开期间主窗口锁定）：账号与余额（/user/balance 真实查询）/ 通用设置 / 模型 / 内置插件 / Agent 预设 / 已归档会话 / Web 插件 / 皮肤（暖黑·深海·森绿）/ 宠物 / 创意工坊 / 使用统计；入口在左下角用户菜单 |
 
 斜杠命令：`/help` `/new` `/fork` `/compact` `/mode <标准|PTC|极简|创造|…>` `/cwd <目录>` `/trajectory`
 

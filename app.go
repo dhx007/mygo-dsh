@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -37,6 +40,11 @@ var (
 	icoPlus   = icon(`<path d="M5 12h14M12 5v14"/>`)
 	icoUp     = icon(`<path d="M18 15l-6-6-6 6"/>`)
 	icoDown   = icon(`<path d="M6 9l6 6 6-6"/>`)
+	icoUser   = icon(`<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>`)
+	icoGlobe  = icon(`<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>`)
+	icoPal    = icon(`<circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/>`)
+	icoArc    = icon(`<rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>`)
+	icoHeart  = icon(`<path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>`)
 )
 
 // ---- chat list items ----
@@ -146,6 +154,20 @@ type app struct {
 	savedAt       time.Time    // last successful settings save
 	userMenu      bool         // user-row popup menu open
 	settingsWin   *mygo.Window // the settings child window, if open
+	setSection    string       // settings window: selected section label
+
+	// 账号与余额（DeepSeek /user/balance）
+	balLoading              bool
+	balFetched              bool
+	balErr                  string
+	balTotal, balTopped     string
+	balGranted, balCurrency string
+
+	// 使用统计
+	statsLoading, statsLoaded  bool
+	statsSessions, statsEvents int
+
+	setList ui.ListState // settings window content scroll
 
 	pending     *pendingApproval
 	alwaysAllow map[string]bool
@@ -191,7 +213,7 @@ func newApp() *app {
 	a := &app{
 		cfg:           cfg,
 		cfgPath:       path,
-		theme:         dshTheme(),
+		theme:         dshTheme(cfg.Theme),
 		page:          "chat",
 		alwaysAllow:   map[string]bool{},
 		toolNames:     map[string]string{},
@@ -1089,7 +1111,7 @@ func (a *app) settingsView(c *ui.Context) {
 			ui.Text(c, "设置").Bold()
 			ui.Spacer(c)
 		})
-		a.settingsBody(c)
+		a.secModel(c)
 	})
 }
 
@@ -1105,13 +1127,18 @@ func (a *app) openSettings() {
 		a.settingsWin.Focus()
 		return
 	}
+	a.setSection = "账号与余额"
+	if strings.TrimSpace(a.cfg.APIKey) != "" && !a.balFetched && !a.balLoading {
+		go a.fetchBalance()
+	}
 	a.settingsWin = mygo.NewWindow(mygo.WindowOptions{
 		Title:     "设置 · DeepSeek Harness",
-		Width:     640,
-		Height:    680,
-		MinWidth:  520,
-		MinHeight: 460,
+		Width:     960,
+		Height:    700,
+		MinWidth:  820,
+		MinHeight: 560,
 		Parent:    a.win,
+		Modal:     true, // 打开期间主窗口不可操作
 		StateKey:  "settings",
 		Content:   ui.View(a.settingsWindowView),
 	})
@@ -1121,100 +1148,528 @@ func (a *app) openSettings() {
 // settingsWindowView is the content of the settings child window.
 func (a *app) settingsWindowView(c *ui.Context) {
 	c.SetTheme(a.theme)
-	ui.Column(c).Fill().Background(c.Theme().Background).Children(func() {
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Padding(14, 18, 8).BorderWidth(0, 0, 1, 0).BorderColor(c.Theme().Border).Children(func() {
-			ui.Icon(c, icoGear).FontSize(14)
-			ui.Text(c, "设置 · DeepSeek Harness").Bold().FontSize(14)
+	t := c.Theme()
+	ui.Column(c).Fill().Background(t.Background).Children(func() {
+		ui.Row(c).Gap(10).AlignItems(ui.Center).Padding(16, 20, 10).Children(func() {
+			ui.Text(c, "设置").Bold().FontSize(17)
 			ui.Spacer(c)
+			if ui.Button(c, "打开配置文件").Clicked() {
+				a.revealConfig()
+			}
 		})
 		a.settingsBody(c)
 	})
 }
 
+// settingsSections is the left nav of the settings window, mirroring the
+// original app's sections.
+var settingsSections = []struct {
+	icon  *ui.SVG
+	label string
+}{
+	{icoUser, "账号与余额"},
+	{icoGear, "通用设置"},
+	{icoBot, "模型"},
+	{icoPlugin, "内置插件"},
+	{icoList, "Agent 预设"},
+	{icoArc, "已归档会话"},
+	{icoGlobe, "Web 插件"},
+	{icoPal, "皮肤"},
+	{icoHeart, "宠物"},
+	{icoPlus, "创意工坊"},
+	{icoTraj, "使用统计"},
+}
+
+// settingsBody is the settings window content: left nav + right panel.
 func (a *app) settingsBody(c *ui.Context) {
 	t := c.Theme()
-	{
-		ui.List(c, &a.settingsList, 1, func(i int) {
-			ui.Column(c).Fill().Padding(20, 24).Gap(16).Children(func() {
-				// 模型
-				ui.Column(c).Gap(10).Padding(16).Radius(10).Background(t.Surface).Children(func() {
-					ui.Text(c, "模型 · DeepSeek").Bold()
-					ui.Text(c, "API Key（明文保存在 "+a.cfgPath+"）").TextColor(t.TextMuted).FontSize(12)
-					ui.TextInput(c, &a.fKey).Password().Placeholder("sk-…").Label("API Key 输入框")
-					ui.Text(c, "API Base URL（兼容 OpenAI 接口的服务都可填）").TextColor(t.TextMuted).FontSize(12)
-					ui.TextInput(c, &a.fURL).Placeholder("https://api.deepseek.com").Label("Base URL 输入框")
-					ui.Text(c, "模型").TextColor(t.TextMuted).FontSize(12)
-					ui.Select(c, &a.fModel, []string{"deepseek-chat", "deepseek-reasoner"})
+	if a.setSection == "" {
+		a.setSection = "账号与余额"
+	}
+	ui.Row(c).Fill().Children(func() {
+		// 左侧分区导航
+		ui.Column(c).Width(196).FillHeight().Padding(6, 10).Gap(2).Children(func() {
+			for _, sec := range settingsSections {
+				active := a.setSection == sec.label
+				row := ui.Row(c.Key("sec-"+sec.label)).Gap(10).AlignItems(ui.Center).Padding(9, 12).Radius(8)
+				if active || row.Hovered() {
+					row.Background(t.SurfaceHover)
+				}
+				row.Children(func() {
+					ui.Icon(c, sec.icon).FontSize(15)
+					lbl := ui.Text(c, sec.label).FontSize(13)
+					if active {
+						lbl.TextColor(t.Text)
+					} else {
+						lbl.TextColor(t.TextMuted)
+					}
 				})
-				// 工作区
-				ui.Column(c).Gap(10).Padding(16).Radius(10).Background(t.Surface).Children(func() {
-					ui.Text(c, "默认工作区").Bold()
-					ui.Text(c, "新建会话的目录；bash 的 cwd 与相对路径的根").TextColor(t.TextMuted).FontSize(12)
-					ui.TextInput(c, &a.fWorkDir).Label("默认工作区输入框")
+				if row.Clicked() {
+					a.setSection = sec.label
+					if sec.label == "账号与余额" && !a.balFetched && !a.balLoading {
+						go a.fetchBalance()
+					}
+					if sec.label == "使用统计" && !a.statsLoaded && !a.statsLoading {
+						go a.fetchStats()
+					}
+				}
+			}
+		})
+		// 分隔线
+		ui.Column(c).Width(1).FillHeight().Background(t.Border).Shrink(0)
+		// 右侧内容
+		ui.Column(c).Grow(1).FillHeight().Children(func() {
+			ui.List(c, &a.setList, 1, func(i int) {
+				ui.Column(c).Fill().Padding(20, 24).Gap(14).Children(func() {
+					switch a.setSection {
+					case "通用设置":
+						a.secGeneral(c)
+					case "模型":
+						a.secModel(c)
+					case "内置插件":
+						a.secPlugins(c)
+					case "Agent 预设":
+						a.secPresets(c)
+					case "已归档会话":
+						a.settingsPlaceholder(c, "已归档会话会出现在这里（归档功能与初代 dsh 对齐中）")
+					case "Web 插件":
+						a.settingsPlaceholder(c, "Web 插件（如浏览器扩展桥）与初代 dsh 对齐中")
+					case "皮肤":
+						a.secSkins(c)
+					case "宠物":
+						a.settingsPlaceholder(c, "宠物 🐱 与初代 dsh 对齐中")
+					case "创意工坊":
+						a.settingsPlaceholder(c, "创意工坊：社区模式与技能市场，与初代 dsh 对齐中")
+					case "使用统计":
+						a.secStats(c)
+					default:
+						a.secAccount(c)
+					}
 				})
-				// 权限
-				ui.Column(c).Gap(8).Padding(16).Radius(10).Background(t.Surface).Children(func() {
-					ui.Text(c, "工具权限").Bold()
-					ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-						ui.Checkbox(c, &a.autoApprove, "")
-						ui.Text(c, "自动批准变更类工具（bash / 写文件 / 编辑）——不再逐次询问").FontSize(13)
-					})
-				})
-				// 模式
-				ui.Column(c).Gap(8).Padding(16).Radius(10).Background(t.Surface).Children(func() {
-					ui.Text(c, "模式").Bold()
-					p := a.currentPreset()
+			}).Grow(1)
+		})
+	})
+}
+
+func (a *app) settingsPlaceholder(c *ui.Context, text string) {
+	t := c.Theme()
+	ui.Column(c).Margin(ui.Auto).Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Icon(c, icoGear).FontSize(20)
+		ui.Text(c, text).TextColor(t.TextMuted).FontSize(13)
+	})
+}
+
+// settingsCard wraps a section block in the raised card look.
+func settingsCard(c *ui.Context, title string, fn func()) {
+	t := c.Theme()
+	ui.Column(c).Gap(10).Padding(16).Radius(10).Background(t.Surface).Children(func() {
+		if title != "" {
+			ui.Text(c, title).Bold()
+		}
+		fn()
+	})
+}
+
+// ---- 账号与余额 ----
+
+func (a *app) secAccount(c *ui.Context) {
+	t := c.Theme()
+	settingsCard(c, "", func() {
+		ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
+			ui.Column(c).Width(38).Height(38).Radius(19).Background(t.Accent).
+				AlignItems(ui.Center).Justify(ui.Center).Children(func() {
+				ui.Text(c, "D").FontSize(14).Bold().TextColor(t.AccentText)
+			})
+			ui.Column(c).Gap(2).Children(func() {
+				ui.Text(c, "本地账号").Bold().FontSize(14)
+				ui.Text(c, a.maskedKey()).TextColor(t.TextMuted).FontSize(12)
+			})
+			ui.Spacer(c)
+			if ui.Text(c, "管理 API Key ↗").TextColor(t.TextMuted).FontSize(12).Clicked() {
+				c.OpenURL("https://platform.deepseek.com")
+			}
+		})
+	})
+	settingsCard(c, "余额", func() {
+		if strings.TrimSpace(a.cfg.APIKey) == "" {
+			ui.Text(c, "尚未配置 API Key —— 到「模型」分区填写后即可查询余额").TextColor(t.Warning).FontSize(13)
+			return
+		}
+		row := func(label, value string, big bool) {
+			ui.Row(c).Gap(10).AlignItems(ui.Center).Padding(8, 0).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+				ui.Text(c, label).TextColor(t.TextMuted).FontSize(13)
+				ui.Spacer(c)
+				txt := ui.Text(c, value).Bold()
+				if big {
+					txt.FontSize(16)
+				}
+			})
+		}
+		if a.balLoading {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Spinner(c)
+				ui.Text(c, "查询中…").TextColor(t.TextMuted).FontSize(13)
+			})
+		} else if a.balErr != "" {
+			ui.Text(c, "查询失败："+a.balErr).TextColor(t.Danger).FontSize(13)
+		} else if a.balFetched {
+			cur := a.balCurrency
+			if cur == "" {
+				cur = "CNY"
+			}
+			sym := "¥"
+			if cur != "CNY" {
+				sym = cur + " "
+			}
+			row("充值余额", sym+a.balTopped, true)
+			row("赠金余额", sym+a.balGranted, false)
+			row("总余额", sym+a.balTotal, false)
+		} else {
+			ui.Text(c, "点击「查询用量」获取最新余额").TextColor(t.TextMuted).FontSize(13)
+		}
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Padding(6, 0, 0).Children(func() {
+			ui.Text(c, "更多").TextColor(t.TextMuted).FontSize(13)
+			ui.Spacer(c)
+			if ui.Button(c, "查询用量").Clicked() {
+				go a.fetchBalance()
+			}
+			if ui.PrimaryButton(c, "充值").Clicked() {
+				c.OpenURL("https://platform.deepseek.com/topup")
+			}
+		})
+	})
+}
+
+func (a *app) maskedKey() string {
+	k := strings.TrimSpace(a.cfg.APIKey)
+	if k == "" {
+		return "未配置"
+	}
+	if len(k) <= 11 {
+		return k[:3] + "…" + k[len(k)-2:]
+	}
+	return k[:7] + "…" + k[len(k)-4:]
+}
+
+func (a *app) revealConfig() {
+	cmd := exec.Command("open", "-R", a.cfgPath)
+	if err := cmd.Start(); err != nil {
+		_ = exec.Command("xdg-open", a.cfgPath).Start()
+	}
+}
+
+// ---- 通用设置 / 模型 ----
+
+func (a *app) secGeneral(c *ui.Context) {
+	t := c.Theme()
+	settingsCard(c, "默认工作区", func() {
+		ui.Text(c, "新建会话的目录；bash 的 cwd 与相对路径的根").TextColor(t.TextMuted).FontSize(12)
+		ui.TextInput(c, &a.fWorkDir).Label("默认工作区输入框")
+	})
+	settingsCard(c, "工具权限", func() {
+		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+			ui.Checkbox(c, &a.autoApprove, "")
+			ui.Text(c, "自动批准变更类工具（bash / 写文件 / 编辑）——不再逐次询问").FontSize(13)
+		})
+	})
+	settingsCard(c, "配置", func() {
+		ui.Text(c, "配置文件路径："+a.cfgPath).TextColor(t.TextMuted).FontSize(12)
+		if ui.Button(c, "打开配置文件").Clicked() {
+			a.revealConfig()
+		}
+	})
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		if ui.PrimaryButton(c, "保存设置").Clicked() {
+			a.saveSettings()
+		}
+		if !a.savedAt.IsZero() {
+			ui.Text(c, "已保存 "+a.savedAt.Format("15:04:05")).TextColor(t.Success).FontSize(12)
+		}
+		if a.errText != "" {
+			ui.Text(c, a.errText).TextColor(t.Danger).FontSize(12)
+		}
+	})
+}
+
+func (a *app) secModel(c *ui.Context) {
+	t := c.Theme()
+	settingsCard(c, "模型 · DeepSeek", func() {
+		ui.Text(c, "API Key（明文保存在 "+a.cfgPath+"）").TextColor(t.TextMuted).FontSize(12)
+		ui.TextInput(c, &a.fKey).Password().Placeholder("sk-…").Label("API Key 输入框")
+		ui.Text(c, "API Base URL（兼容 OpenAI 接口的服务都可填）").TextColor(t.TextMuted).FontSize(12)
+		ui.TextInput(c, &a.fURL).Placeholder("https://api.deepseek.com").Label("Base URL 输入框")
+		ui.Text(c, "模型").TextColor(t.TextMuted).FontSize(12)
+		ui.Select(c, &a.fModel, []string{"deepseek-chat", "deepseek-reasoner"})
+	})
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		if ui.PrimaryButton(c, "保存设置").Clicked() {
+			a.saveSettings()
+		}
+		if !a.savedAt.IsZero() {
+			ui.Text(c, "已保存 "+a.savedAt.Format("15:04:05")).TextColor(t.Success).FontSize(12)
+		}
+		if a.errText != "" {
+			ui.Text(c, a.errText).TextColor(t.Danger).FontSize(12)
+		}
+	})
+}
+
+// ---- 内置插件 ----
+
+var toolDescExtra = map[string]string{
+	"todo":     "任务清单：维护本会话的 plan checklist",
+	"task":     "子代理：把自包含的子任务委托给一个子 agent",
+	"run_code": "PTC：模型写一段脚本，把多次工具操作合并成一次执行",
+}
+
+func (a *app) secPlugins(c *ui.Context) {
+	t := c.Theme()
+	names := []string{"bash", "read_file", "write_file", "edit_file", "glob", "grep", "web_fetch", "web_search", "todo", "task", "run_code"}
+	desc := map[string]string{}
+	for _, tl := range tools.All() {
+		desc[tl.Name] = tl.Description
+	}
+	for k, v := range toolDescExtra {
+		desc[k] = v
+	}
+	for _, name := range names {
+		ui.Row(c).Gap(10).AlignItems(ui.Center).Padding(10, 12).Radius(8).Children(func() {
+			ui.Column(c).Grow(1).Gap(2).Children(func() {
+				ui.Text(c, name).Bold().FontSize(13)
+				ui.Text(c, ellipsis(desc[name], 100)).TextColor(t.TextMuted).FontSize(11)
+			})
+			ui.Switch(c, a.pluginOn(name))
+			if *a.pluginOn(name) != a.enabledTool(name) {
+				a.setEnabled(name, *a.pluginOn(name))
+			}
+		})
+	}
+}
+
+// ---- Agent 预设 ----
+
+func (a *app) secPresets(c *ui.Context) {
+	t := c.Theme()
+	settingsCard(c, "内置与自定义预设", func() {
+		for _, p := range a.presets {
+			current := a.cfg.Mode == p.ID
+			ui.Row(c).Gap(10).AlignItems(ui.Center).Padding(8, 10).Radius(8).Children(func() {
+				if current {
+					ui.Text(c, "●").TextColor(t.Accent).FontSize(11)
+				} else {
+					ui.Text(c, "○").TextColor(t.TextMuted).FontSize(11)
+				}
+				ui.Column(c).Grow(1).Gap(2).Children(func() {
 					ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-						ui.Text(c, p.Label).FontSize(13)
+						ui.Text(c, p.Label).Bold().FontSize(13)
 						ui.Text(c, p.Description).TextColor(t.TextMuted).FontSize(12)
-						ui.Spacer(c)
 					})
-					ui.Row(c).Gap(8).Wrap().Children(func() {
-						ui.Text(c, "挂载工具：").TextColor(t.TextMuted).FontSize(12)
+					ui.Row(c).Gap(6).Children(func() {
 						for _, n := range p.Tools {
-							ui.Badge(c, n)
+							ui.Text(c, n).FontSize(10).Padding(1, 6).Radius(6).Background(t.Background).TextColor(t.TextMuted)
 						}
 					})
-					ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-						ui.Checkbox(c, &a.epOpen, "创造一个新模式（自定义预设）")
-						ui.Spacer(c)
-					})
-					if a.epOpen {
-						ui.Column(c).Gap(8).Padding(12).Radius(8).Background(t.Background).Children(func() {
-							ui.Text(c, "名称").TextColor(t.TextMuted).FontSize(12)
-							ui.TextInput(c, &a.epLabel).Placeholder("例如：写作")
-							ui.Text(c, "系统提示词（{cwd} 与 {data} 会自动替换）").TextColor(t.TextMuted).FontSize(12)
-							ui.TextArea(c, &a.epPrompt).Height(110)
-							ui.Text(c, "挂载的插件（工具）").TextColor(t.TextMuted).FontSize(12)
-							epToolNames := []string{"bash", "read_file", "write_file", "edit_file", "glob", "grep", "web_fetch", "web_search", "todo", "task", "run_code"}
-							ui.Row(c).Wrap().GapX(12).GapY(6).Children(func() {
-								for _, n := range epToolNames {
-									ui.Checkbox(c, a.epToolOn(n), n)
-								}
-							})
-							ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
-								if ui.Button(c, "保存新模式").Clicked() {
-									a.saveCustomPreset()
-								}
-							})
-						})
+				})
+			})
+			if !current {
+				if ui.Button(c, "设为默认").Clicked() {
+					a.cfg.Mode = p.ID
+					_ = saveConfig(a.cfg, a.cfgPath)
+					if a.ses != nil {
+						a.ses.Meta.Mode = p.ID
+						a.ses.Touch()
+						a.refreshSessions()
+					}
+					a.ag = nil
+				}
+			}
+		}
+	})
+	settingsCard(c, "创造新模式", func() {
+		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+			ui.Checkbox(c, &a.epOpen, "创造一个新模式（自定义预设）")
+			ui.Spacer(c)
+		})
+		if a.epOpen {
+			ui.Column(c).Gap(8).Padding(12).Radius(8).Background(t.Background).Children(func() {
+				ui.Text(c, "名称").TextColor(t.TextMuted).FontSize(12)
+				ui.TextInput(c, &a.epLabel).Placeholder("例如：写作")
+				ui.Text(c, "系统提示词（{cwd} 与 {data} 会自动替换）").TextColor(t.TextMuted).FontSize(12)
+				ui.TextArea(c, &a.epPrompt).Height(110)
+				ui.Text(c, "挂载的插件（工具）").TextColor(t.TextMuted).FontSize(12)
+				epToolNames := []string{"bash", "read_file", "write_file", "edit_file", "glob", "grep", "web_fetch", "web_search", "todo", "task", "run_code"}
+				ui.Row(c).Wrap().GapX(12).GapY(6).Children(func() {
+					for _, n := range epToolNames {
+						ui.Checkbox(c, a.epToolOn(n), n)
 					}
 				})
-				// save
-				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-					if ui.PrimaryButton(c, "保存设置").Clicked() {
-						a.saveSettings()
-					}
-					if !a.savedAt.IsZero() {
-						ui.Text(c, "已保存 "+a.savedAt.Format("15:04:05")).TextColor(t.Success).FontSize(12)
-					}
-					if a.errText != "" {
-						ui.Text(c, a.errText).TextColor(t.Danger).FontSize(12)
+				ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
+					if ui.Button(c, "保存新模式").Clicked() {
+						a.saveCustomPreset()
 					}
 				})
 			})
-		}).Grow(1)
+		}
+	})
+}
+
+// ---- 皮肤 ----
+
+var skinNames = []string{"暖黑", "深海", "森绿"}
+
+func (a *app) secSkins(c *ui.Context) {
+	t := c.Theme()
+	settingsCard(c, "主题", func() {
+		for _, name := range skinNames {
+			current := a.cfg.Theme == name
+			row := ui.Row(c.Key("skin-"+name)).Gap(12).AlignItems(ui.Center).Padding(10, 12).Radius(8)
+			if current || row.Hovered() {
+				row.Background(t.SurfaceHover)
+			}
+			row.Children(func() {
+				ui.Text(c, name).FontSize(13)
+				ui.Spacer(c)
+				if current {
+					ui.Text(c, "✓ 使用中").TextColor(t.Accent).FontSize(12)
+				}
+			})
+			if row.Clicked() && !current {
+				a.applySkin(name)
+			}
+		}
+	})
+	ui.Text(c, "皮肤即时生效，同时作用于主窗口与本窗口").TextColor(t.TextMuted).FontSize(12)
+}
+
+// ---- 使用统计 ----
+
+func (a *app) secStats(c *ui.Context) {
+	t := c.Theme()
+	if !a.statsLoaded && !a.statsLoading {
+		go a.fetchStats()
 	}
+	settingsCard(c, "本地统计", func() {
+		if a.statsLoading {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Spinner(c)
+				ui.Text(c, "统计中…").TextColor(t.TextMuted).FontSize(13)
+			})
+			return
+		}
+		row := func(label, value string) {
+			ui.Row(c).Padding(6, 0).Children(func() {
+				ui.Text(c, label).TextColor(t.TextMuted).FontSize(13)
+				ui.Spacer(c)
+				ui.Text(c, value).Bold().FontSize(13)
+			})
+		}
+		row("会话总数", fmt.Sprint(a.statsSessions))
+		row("轨迹事件", fmt.Sprint(a.statsEvents))
+		row("当前模型", a.cfg.Model)
+		row("当前工作区", ellipsis(a.cfg.WorkDir, 40))
+	})
+	ui.Text(c, "Token 用量统计需要模型返回 usage 字段，当前流式接口未启用").TextColor(t.TextMuted).FontSize(12)
+}
+
+// ---- balance / stats 数据 ----
+
+func (a *app) fetchBalance() {
+	if a.balLoading {
+		return
+	}
+	key := strings.TrimSpace(a.cfg.APIKey)
+	if key == "" {
+		a.applyBalance("", "", "", "", "尚未配置 API Key")
+		return
+	}
+	a.balLoading = true
+	a.balErr = ""
+	go func() {
+		req, err := http.NewRequest("GET", strings.TrimRight(a.cfg.BaseURL, "/")+"/user/balance", nil)
+		if err != nil {
+			a.applyBalance("", "", "", "", err.Error())
+			return
+		}
+		req.Header.Set("Authorization", "Bearer "+key)
+		client := &http.Client{Timeout: 15 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			a.applyBalance("", "", "", "", err.Error())
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != 200 {
+			b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			a.applyBalance("", "", "", "", fmt.Sprintf("API 返回 %d: %s", resp.StatusCode, ellipsis(string(b), 120)))
+			return
+		}
+		var out struct {
+			BalanceInformation struct {
+				TotalBalance    string `json:"total_balance"`
+				GrantedBalance  string `json:"granted_balance"`
+				ToppedUpBalance string `json:"topped_up_balance"`
+				Currency        string `json:"currency"`
+			} `json:"balance_information"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			a.applyBalance("", "", "", "", "解析响应失败: "+err.Error())
+			return
+		}
+		bi := out.BalanceInformation
+		a.applyBalance(bi.TotalBalance, bi.ToppedUpBalance, bi.GrantedBalance, bi.Currency, "")
+	}()
+}
+
+func (a *app) applyBalance(total, topped, granted, currency, errText string) {
+	fn := func() {
+		a.balLoading = false
+		a.balFetched = true
+		a.balErr = errText
+		a.balTotal, a.balTopped, a.balGranted, a.balCurrency = total, topped, granted, currency
+	}
+	a.onSettingsWin(fn)
+}
+
+func (a *app) fetchStats() {
+	if a.statsLoading {
+		return
+	}
+	a.statsLoading = true
+	go func() {
+		sessions := a.store.List()
+		events := 0
+		for _, m := range sessions {
+			if ses, err := a.store.Open(m.ID); err == nil {
+				events += len(ses.Events())
+			}
+		}
+		fn := func() {
+			a.statsLoading = false
+			a.statsLoaded = true
+			a.statsSessions, a.statsEvents = len(sessions), events
+		}
+		a.onSettingsWin(fn)
+	}()
+}
+
+// onSettingsWin runs fn on the settings window's UI pass (or inline in
+// headless runs).
+func (a *app) onSettingsWin(fn func()) {
+	if a.settingsWin != nil && !a.settingsWin.IsDestroyed() {
+		a.settingsWin.Update(fn)
+		return
+	}
+	fn()
+}
+
+func (a *app) applySkin(name string) {
+	a.cfg.Theme = name
+	_ = saveConfig(a.cfg, a.cfgPath)
+	a.theme = dshTheme(name)
+	if a.win != nil && !a.win.IsDestroyed() {
+		a.win.Update(func() {})
+	}
+	a.onSettingsWin(func() {})
 }
 
 var epToolState = map[string]*bool{}
