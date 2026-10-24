@@ -116,8 +116,12 @@ func TestSettingsSaveKey(t *testing.T) {
 	tt := ui.NewTester(a.view, 1200, 780)
 	tt.Frame()
 
+	if err := tt.Click("用户菜单"); err != nil {
+		t.Fatalf("open user menu: %v", err)
+	}
+	tt.Frame()
 	if err := tt.Click("设置"); err != nil {
-		t.Fatalf("open settings: %v", err)
+		t.Fatalf("click 设置 in user menu: %v (texts=%v)", err, tt.Texts())
 	}
 	tt.Frame()
 	if a.page != "settings" {

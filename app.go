@@ -35,6 +35,8 @@ var (
 	icoList   = icon(`<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>`)
 	icoFolder = icon(`<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/>`)
 	icoPlus   = icon(`<path d="M5 12h14M12 5v14"/>`)
+	icoUp     = icon(`<path d="M18 15l-6-6-6 6"/>`)
+	icoDown   = icon(`<path d="M6 9l6 6 6-6"/>`)
 )
 
 // ---- chat list items ----
@@ -142,6 +144,7 @@ type app struct {
 	toolNames     map[string]string
 	focusComposer int       // frames left to hand keyboard focus back to the composer
 	savedAt       time.Time // last successful settings save
+	userMenu      bool      // user-row popup menu open
 
 	pending     *pendingApproval
 	alwaysAllow map[string]bool
@@ -316,7 +319,6 @@ func (a *app) sidebar(c *ui.Context) {
 		// 导航 + 工作区
 		if ui.Sidebar(c, &a.selectedID, func() {
 			ui.SidebarItem(c, "page:plugins", icoPlugin, "插件")
-			ui.SidebarItem(c, "page:settings", icoGear, "设置")
 			ui.Spacer(c).Height(6)
 			groups := groupByWorkspace(a.visibleSessions())
 			for _, g := range groups {
@@ -338,7 +340,7 @@ func (a *app) sidebar(c *ui.Context) {
 				a.focusComposer = 2
 			}
 		}
-		// 底部：状态行 + 用户行
+		// 底部：状态行 + 用户行（点击弹出菜单）
 		ui.Column(c).Padding(8, 16, 10).Gap(6).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Children(func() {
 			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 				ui.Icon(c, icoChat).FontSize(11)
@@ -346,12 +348,52 @@ func (a *app) sidebar(c *ui.Context) {
 				ui.Spacer(c)
 				ui.Text(c, fmt.Sprintf("会话 %d", len(a.sessions))).TextColor(t.TextMuted).FontSize(11)
 			})
-			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			userRow := ui.Row(c).Gap(8).AlignItems(ui.Center).Padding(6, 8).Radius(8).Label("用户菜单")
+			if userRow.Hovered() || a.userMenu {
+				userRow.Background(t.SurfaceHover)
+			}
+			userRow.Children(func() {
 				ui.Text(c, "D").FontSize(11).Bold().Width(20).Height(20).Radius(10).
 					Background(t.Accent).TextColor(t.AccentText).AlignItems(ui.Center)
 				ui.Text(c, "DeepSeek Harness").FontSize(12)
 				ui.Spacer(c)
-				ui.Text(c, "v0.2").TextColor(t.TextMuted).FontSize(10)
+				if a.userMenu {
+					ui.Icon(c, icoUp).FontSize(12)
+				} else {
+					ui.Icon(c, icoDown).FontSize(12)
+				}
+			})
+			if userRow.Clicked() {
+				a.userMenu = !a.userMenu
+			}
+			ui.Popover(c, userRow, &a.userMenu, func() {
+				for _, it := range []struct {
+					icon  *ui.SVG
+					label string
+					page  string
+				}{
+					{icoGear, "设置", "settings"},
+					{icoPlugin, "插件", "plugins"},
+				} {
+					entry := ui.Row(c.Key(it.label)).Gap(10).AlignItems(ui.Center).Padding(8, 12).Radius(8).Width(200)
+					if entry.Hovered() {
+						entry.Background(t.SurfaceHover)
+					}
+					entry.Children(func() {
+						ui.Icon(c, it.icon).FontSize(14)
+						ui.Text(c, it.label).FontSize(13)
+					})
+					if entry.Clicked() {
+						a.userMenu = false
+						if strings.HasPrefix(a.selectedID, "page:") {
+							a.selectedID = "" // 解除 page: 前缀对 page 的逐帧覆盖
+						}
+						a.page = it.page
+					}
+				}
+				ui.Row(c).Padding(6, 12).Children(func() {
+					ui.Text(c, "DeepSeek Harness v0.2").TextColor(t.TextMuted).FontSize(11)
+				})
 			})
 		})
 	})
