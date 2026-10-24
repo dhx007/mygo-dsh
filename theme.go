@@ -2,32 +2,32 @@ package main
 
 import "github.com/egoist/mygo/ui"
 
-// dshTheme reproduces the original DeepSeek Harness dark design tokens
-// (dsw-neutral-bluish scale, deepseek brand blues).
+// dshTheme reproduces the DeepSeek Harness desktop look from the current
+// app: a warm near-black canvas, raised surfaces, hairline borders and a
+// single warm-orange action accent (the send button, active tab).
 func dshTheme() *ui.Theme {
 	t := ui.DarkTheme()
 	t.Dark = true
-	t.Background = ui.Hex("#151517")     // neutral-bluish-950
-	t.Surface = ui.Hex("#2c2c2e")        // neutral-bluish-850: controls, cards
-	t.SurfaceHover = ui.Hex("#353638")   // neutral-bluish-800
-	t.SurfacePressed = ui.Hex("#3c3c3d") // neutral-bluish-700
-	t.Border = ui.Hex("#2e2e31")         // ≈ border-l1 (#ffffff0f) over the base
-	t.Text = ui.Hex("#f9fafb")           // neutral-bluish-50: label-primary
-	t.TextMuted = ui.Hex("#adb2b8")      // neutral-bluish-400: label-tertiary
-	t.Accent = ui.Hex("#5686fe")         // deepseek-450
-	t.AccentHover = ui.Hex("#7aaaff")    // deepseek-400
-	t.AccentPressed = ui.Hex("#4176e6")  // deepseek-500
-	t.AccentText = ui.Hex("#0f1115")     // neutral-bluish-1000
-	t.Danger = ui.Hex("#f25a5a")         // red-400
-	t.Warning = ui.Hex("#f7ad31")        // amber-400
-	t.Success = ui.Hex("#22c55e")        // green-500
-	t.Selection = ui.RGBA(86, 134, 254, 0.40)
-	t.Focus = ui.RGBA(122, 170, 255, 0.60)
-	t.Scrollbar = ui.RGBA(255, 255, 255, 0.22)
-	t.Radius = 8
+	t.Background = ui.Hex("#131110")     // warm near-black canvas
+	t.Surface = ui.Hex("#1e1b19")        // sidebar / raised cards
+	t.SurfaceHover = ui.Hex("#2a2624")   // hover on rows and controls
+	t.SurfacePressed = ui.Hex("#332e2b") // pressed
+	t.Border = ui.Hex("#2e2a27")         // hairline borders
+	t.Text = ui.Hex("#f3f0ea")           // warm white
+	t.TextMuted = ui.Hex("#a39d95")      // muted warm gray
+	t.Accent = ui.Hex("#e85d2a")         // action orange (send / active tab)
+	t.AccentHover = ui.Hex("#ff7040")
+	t.AccentPressed = ui.Hex("#c94e23")
+	t.AccentText = ui.Hex("#171310")
+	t.Danger = ui.Hex("#f25a5a")
+	t.Warning = ui.Hex("#f7ad31")
+	t.Success = ui.Hex("#22c55e")
+	t.Selection = ui.RGBA(232, 93, 42, 0.35)
+	t.Focus = ui.RGBA(255, 112, 64, 0.55)
+	t.Scrollbar = ui.RGBA(255, 255, 255, 0.20)
+	t.Radius = 10
 	return t
 }
 
-// Secondary label color of the DSH theme (neutral-bluish-300), for text
-// that is muted but still readable, as the original uses for captions.
-var dshLabelSecondary = ui.Hex("#cfd3d6")
+// Secondary label color, for captions that are muted but still readable.
+var dshLabelSecondary = ui.Hex("#cfc9c2")

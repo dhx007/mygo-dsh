@@ -72,7 +72,7 @@ func TestNewSessionAndSend(t *testing.T) {
 	}
 
 	// 新建会话
-	if err := tt.Click("＋ 新建会话"); err != nil {
+	if err := tt.Click("⊕ 新会话"); err != nil {
 		t.Fatalf("click 新建会话: %v", err)
 	}
 	tt.Frame()
@@ -90,7 +90,7 @@ func TestNewSessionAndSend(t *testing.T) {
 	}
 
 	// 发送
-	if err := tt.Click("发送"); err != nil {
+	if err := tt.Click("↑"); err != nil {
 		t.Fatalf("click 发送: %v", err)
 	}
 	waitFor(t, func() bool { return !a.busy }, "send never finished")
@@ -148,7 +148,7 @@ func TestSidebarReloadSession(t *testing.T) {
 	tt := ui.NewTester(a.view, 1200, 780)
 	tt.Frame()
 
-	if err := tt.Click("＋ 新建会话"); err != nil {
+	if err := tt.Click("⊕ 新会话"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
@@ -159,7 +159,7 @@ func TestSidebarReloadSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if err := tt.Click("会话"); err != nil {
+	if err := tt.Click("对话"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()

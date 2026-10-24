@@ -33,14 +33,9 @@ var (
 	icoWrench = icon(`<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>`)
 	icoBot    = icon(`<rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V4M8 4h8M9 14h.01M15 14h.01"/>`)
 	icoList   = icon(`<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>`)
+	icoFolder = icon(`<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/>`)
+	icoPlus   = icon(`<path d="M5 12h14M12 5v14"/>`)
 )
-
-var pageIcons = map[string]*ui.SVG{
-	"page:chat":       icoChat,
-	"page:trajectory": icoTraj,
-	"page:plugins":    icoPlugin,
-	"page:settings":   icoGear,
-}
 
 // ---- chat list items ----
 
@@ -260,14 +255,12 @@ func (a *app) view(c *ui.Context) {
 		a.sidebar(c)
 		ui.Column(c).Grow(1).FillHeight().Background(c.Theme().Background).Children(func() {
 			switch a.page {
-			case "trajectory":
-				a.trajectoryView(c)
 			case "plugins":
 				a.pluginsView(c)
 			case "settings":
 				a.settingsView(c)
 			default:
-				a.chatView(c)
+				a.chatShell(c)
 			}
 		})
 	})
@@ -301,49 +294,66 @@ func shortWS(ws string) string {
 
 func (a *app) sidebar(c *ui.Context) {
 	t := c.Theme()
-	ui.Column(c).Width(272).FillHeight().Background(t.Surface).Shrink(0).Children(func() {
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Padding(14, 16, 8).Children(func() {
-			ui.Icon(c, icoBot).FontSize(16)
-			ui.Text(c, "DeepSeek Harness").Bold().FontSize(13)
+	ui.Column(c).Width(264).FillHeight().Background(t.Surface).Shrink(0).Children(func() {
+		// 品牌行：logo + DeepSeek + HARNESS 徽标
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Padding(14, 16, 10).Children(func() {
+			ui.Icon(c, icoBot).FontSize(17)
+			ui.Text(c, "DeepSeek").Bold().FontSize(14)
+			ui.Text(c, "HARNESS").FontSize(9).Padding(2, 5).Radius(4).
+				BorderWidth(1, 1, 1, 1).BorderColor(t.Border).TextColor(t.TextMuted)
+			ui.Spacer(c)
 		})
+		// 新会话：大按钮
 		ui.Row(c).Padding(0, 12, 8).Children(func() {
-			if ui.PrimaryButton(c, "＋ 新建会话").Clicked() {
+			if ui.Button(c, "⊕ 新会话").Grow(1).Clicked() {
 				a.newSession()
 			}
 		})
-		ui.Row(c).Padding(0, 12, 10).Children(func() {
+		// 搜索
+		ui.Row(c).Padding(0, 12, 8).Children(func() {
 			ui.TextInput(c, &a.query).Placeholder("搜索会话与轨迹…")
 		})
+		// 导航 + 工作区
 		if ui.Sidebar(c, &a.selectedID, func() {
+			ui.SidebarItem(c, "page:plugins", icoPlugin, "插件")
+			ui.SidebarItem(c, "page:settings", icoGear, "设置")
+			ui.Spacer(c).Height(6)
 			groups := groupByWorkspace(a.visibleSessions())
 			for _, g := range groups {
 				open := a.wsOpenFor(g.workspace)
 				ui.SidebarSection(c, shortWS(g.workspace), open, func() {
 					for _, m := range g.items {
-						ui.SidebarItem(c, m.ID, nil, m.Title)
+						ui.SidebarItem(c, m.ID, icoFolder, m.Title)
 					}
 				})
 			}
 			if len(groups) == 0 {
 				ui.Text(c, "没有匹配的会话").TextColor(t.TextMuted).FontSize(12).Padding(4, 20)
 			}
-			ui.Spacer(c)
-			ui.SidebarSection(c, "页面", &a.navOpen, func() {
-				for _, pg := range []struct{ id, label string }{
-					{"page:chat", "会话"}, {"page:trajectory", "轨迹"},
-					{"page:plugins", "插件"}, {"page:settings", "设置"},
-				} {
-					ui.SidebarItem(c, pg.id, pageIcons[pg.id], pg.label)
-				}
-			})
 		}).Grow(1).Changed() {
 			if strings.HasPrefix(a.selectedID, "page:") {
 				a.page = strings.TrimPrefix(a.selectedID, "page:")
 			} else if a.selectedID != "" {
 				a.page = "chat"
+				a.focusComposer = 2
 			}
 		}
-		ui.Text(c, "v0.1 · Go 原生复刻").TextColor(t.TextMuted).FontSize(10).Padding(4, 16, 10)
+		// 底部：状态行 + 用户行
+		ui.Column(c).Padding(8, 16, 10).Gap(6).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Children(func() {
+			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+				ui.Icon(c, icoChat).FontSize(11)
+				ui.Text(c, "本地模式").TextColor(t.TextMuted).FontSize(11)
+				ui.Spacer(c)
+				ui.Text(c, fmt.Sprintf("会话 %d", len(a.sessions))).TextColor(t.TextMuted).FontSize(11)
+			})
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "D").FontSize(11).Bold().Width(20).Height(20).Radius(10).
+					Background(t.Accent).TextColor(t.AccentText).AlignItems(ui.Center)
+				ui.Text(c, "DeepSeek Harness").FontSize(12)
+				ui.Spacer(c)
+				ui.Text(c, "v0.2").TextColor(t.TextMuted).FontSize(10)
+			})
+		})
 	})
 }
 
@@ -508,19 +518,16 @@ func (a *app) forkSession() {
 	a.page = "chat"
 }
 
-// ---- chat view ----
+// ---- chat view (对话 / 轨迹 tabs over one shell) ----
 
-func (a *app) chatView(c *ui.Context) {
+func (a *app) chatShell(c *ui.Context) {
 	t := c.Theme()
-	a.list.Key = func(i int) any { return a.msgs[i].id }
-	a.list.FollowEnd = true
-	a.list.FollowAnimation = &ui.Smooth
 	ui.Column(c).Fill().Children(func() {
-		// header
-		ui.Row(c).Gap(10).AlignItems(ui.Center).Padding(10, 16).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+		// 头部：标题 + 模式 + 会话操作
+		ui.Row(c).Gap(10).AlignItems(ui.Center).Padding(12, 20, 6).Children(func() {
 			if a.ses != nil {
-				ui.Text(c, a.ses.Meta.Title).Bold().MaxWidth(260).Ellipsis("…")
-				if ui.Select(c, &a.ses.Meta.Mode, presetLabels(a.presets)).Label("模式").Changed() {
+				ui.Text(c, a.ses.Meta.Title).Bold().FontSize(14).MaxWidth(320).Ellipsis("…")
+				if ui.Select(c, &a.ses.Meta.Mode, presetLabels(a.presets)).Changed() {
 					a.modeChanged()
 				}
 				if ui.Button(c, "分叉").Clicked() {
@@ -530,18 +537,39 @@ func (a *app) chatView(c *ui.Context) {
 					a.confirmDel = true
 				}
 			} else {
-				ui.Text(c, "DeepSeek Harness").Bold()
+				ui.Text(c, "DeepSeek Harness").Bold().FontSize(14)
 			}
 			ui.Spacer(c)
 			if a.status != "" {
-				ui.Text(c, a.status).TextColor(t.TextMuted)
+				ui.Text(c, a.status).TextColor(t.TextMuted).FontSize(12)
 			}
-			ui.Text(c, a.cfg.Model).TextColor(t.TextMuted).FontSize(12)
 		})
-		// timeline
+		// 对话 / 轨迹 标签页
+		ui.Row(c).Gap(24).Padding(0, 20).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+			a.tab(c, "对话", "chat")
+			a.tab(c, "轨迹", "trajectory")
+		})
+		if a.page == "trajectory" {
+			a.trajectoryView(c)
+		} else {
+			a.chatTab(c)
+		}
+	})
+	if ui.AlertDialog(c, &a.confirmDel, "删除会话？", "会话的轨迹与历史将一并删除，无法恢复。", "取消", "删除") == 1 {
+		a.deleteSession()
+	}
+}
+
+// chatTab is the 对话 tab: timeline, approval card and the inline composer.
+func (a *app) chatTab(c *ui.Context) {
+	t := c.Theme()
+	a.list.Key = func(i int) any { return a.msgs[i].id }
+	a.list.FollowEnd = true
+	a.list.FollowAnimation = &ui.Smooth
+	ui.Column(c).Fill().Children(func() {
 		ui.List(c, &a.list, len(a.msgs), func(i int) {
 			a.message(c, a.msgs[i])
-		}).Grow(1).Padding(16, 20).Gap(14).Justify(ui.End).Children(func() {
+		}).Grow(1).Padding(18, 20).Gap(14).Justify(ui.End).Children(func() {
 			if len(a.msgs) == 0 {
 				if a.ses == nil {
 					a.welcome(c)
@@ -551,46 +579,74 @@ func (a *app) chatView(c *ui.Context) {
 			}
 		})
 		if a.errText != "" {
-			ui.Row(c).Padding(4, 20).Children(func() {
+			ui.Row(c).Padding(4, 24).Children(func() {
 				ui.Text(c, a.errText).TextColor(t.Danger).FontSize(12).Selectable()
 			})
 		}
 		if a.pending != nil {
 			a.approvalCard(c)
 		}
-		// composer
-		ui.Row(c).Gap(8).Padding(12, 20).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Children(func() {
-			in := ui.TextInput(c, &a.input).Placeholder(a.composerHint()).Grow(1)
-			if a.focusComposer > 0 {
-				// Focus() re-asserts every frame for a two-frame window:
-				// the click that set this flag (新建会话 / 发送) hands
-				// focus to the button AFTER the build, so the next frame
-				// must take it back for typing.
-				in = in.Focus()
-				a.focusComposer--
-			}
-			if a.busy {
-				if ui.Button(c, "停止").Clicked() {
-					a.stop()
+		// 内嵌式输入框：圆角容器 = 输入行 + 操作行
+		ui.Column(c).Padding(8, 20, 4).Children(func() {
+			ui.Column(c).Radius(14).BorderWidth(1, 1, 1, 1).BorderColor(t.Border).Background(t.Surface).Padding(12, 14).Gap(10).Children(func() {
+				in := ui.TextInput(c, &a.input).Placeholder("发消息，/ 调用指令").BorderWidth(0, 0, 0, 0)
+				if a.focusComposer > 0 {
+					// Focus() re-asserts every frame for a two-frame window:
+					// the click that set this flag (新会话 / 发送) hands focus
+					// to the button AFTER the build, so the next frame must
+					// take it back for typing.
+					in = in.Focus()
+					a.focusComposer--
 				}
-			} else if (ui.PrimaryButton(c, "发送").Disabled(strings.TrimSpace(a.input) == "").Clicked() || in.Submitted()) && strings.TrimSpace(a.input) != "" {
-				a.send()
-			}
+				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+					if ui.Button(c, "＋").Width(28).Height(28).Clicked() {
+						a.input = "/"
+						a.focusComposer = 2
+					}
+					if ui.Text(c, "/help 命令").TextColor(t.TextMuted).FontSize(12).Clicked() {
+						a.note("可用命令：/new 新会话 · /compact 压缩历史 · /fork 分叉会话 · /mode <名称> 切换模式 · /cwd <目录> 切换工作区 · /trajectory 轨迹 · /help 本帮助")
+					}
+					ui.Spacer(c)
+					ui.Text(c, a.cfg.Model).TextColor(t.TextMuted).FontSize(12)
+					if a.busy {
+						if ui.Button(c, "停止").Clicked() {
+							a.stop()
+						}
+					} else if (ui.PrimaryButton(c, "↑").Width(30).Height(30).Radius(15).Disabled(strings.TrimSpace(a.input) == "").Clicked() || in.Submitted()) && strings.TrimSpace(a.input) != "" {
+						a.send()
+					}
+				})
+			})
 		})
-		ui.Row(c).Padding(0, 20, 6).Justify(ui.Center).Children(func() {
-			ui.Text(c, "工具会先请求批准 · /compact 压缩历史 · /help 命令帮助").TextColor(t.TextMuted).FontSize(10)
+		// 底部状态栏
+		ui.Row(c).Gap(14).AlignItems(ui.Center).Padding(2, 24, 8).Children(func() {
+			ready := a.status
+			if ready == "" {
+				ready = "就绪"
+			}
+			ui.Text(c, ready+"  ·  轨迹 "+fmt.Sprint(len(a.traj))+" 条").TextColor(t.TextMuted).FontSize(11)
+			ui.Spacer(c)
+			ui.Text(c, "工具会先请求批准").TextColor(t.TextMuted).FontSize(11)
 		})
 	})
-	if ui.AlertDialog(c, &a.confirmDel, "删除会话？", "会话的轨迹与历史将一并删除，无法恢复。", "取消", "删除") == 1 {
-		a.deleteSession()
-	}
 }
 
-func (a *app) composerHint() string {
-	if a.ses == nil {
-		return "新建会话开始（Enter 发送）"
+// tab renders one 对话/轨迹 tab with an orange underline when active.
+func (a *app) tab(c *ui.Context, label, target string) {
+	t := c.Theme()
+	active := a.page == target
+	txt := ui.Text(c, label).FontSize(13).Padding(6, 2)
+	if active {
+		txt = txt.TextColor(t.Text).Bold().BorderWidth(0, 0, 2, 0).BorderColor(t.Accent)
+	} else {
+		txt = txt.TextColor(t.TextMuted)
 	}
-	return "输入消息，Enter 发送（" + shortWS(a.ses.Meta.Workspace) + "）"
+	if txt.Clicked() && !active {
+		a.page = target
+		if target == "chat" {
+			a.focusComposer = 2
+		}
+	}
 }
 
 func presetLabels(all []Preset) []string {
@@ -610,9 +666,6 @@ func labelToPreset(all []Preset, label string) *Preset {
 	return &all[0]
 }
 
-// sessionReady is the empty state of a created (or loaded) session that
-// has no messages yet — so a fresh session never looks like "nothing
-// happened".
 func (a *app) sessionReady(c *ui.Context) {
 	t := c.Theme()
 	p := a.currentPreset()
@@ -621,11 +674,14 @@ func (a *app) sessionReady(c *ui.Context) {
 			ui.Icon(c, icoChat).FontSize(16)
 			ui.Text(c, "会话已就绪").Bold()
 		})
-		ui.Text(c, "工作区 "+a.ses.Meta.Workspace).TextColor(t.TextMuted).FontSize(12)
+		ui.Text(c, "工作区  "+a.ses.Meta.Workspace).TextColor(t.TextMuted).FontSize(12).MaxWidth(520).Ellipsis("…")
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "模式 "+p.Label).TextColor(t.TextMuted).FontSize(12)
-			ui.Text(c, "·").TextColor(t.TextMuted).FontSize(12)
-			ui.Text(c, strings.Join(p.Tools, " / ")).TextColor(t.TextMuted).FontSize(12)
+			ui.Text(c, "模式").TextColor(t.TextMuted).FontSize(12)
+			ui.Text(c, p.Label).FontSize(12)
+		})
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "工具").TextColor(t.TextMuted).FontSize(12)
+			ui.Text(c, strings.Join(p.Tools, " · ")).FontSize(12)
 		})
 		ui.Text(c, "在下方输入第一条消息开始。").TextColor(t.TextMuted).FontSize(12)
 	})
