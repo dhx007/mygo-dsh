@@ -142,9 +142,10 @@ type app struct {
 	pump   *pump
 
 	toolNames     map[string]string
-	focusComposer int       // frames left to hand keyboard focus back to the composer
-	savedAt       time.Time // last successful settings save
-	userMenu      bool      // user-row popup menu open
+	focusComposer int          // frames left to hand keyboard focus back to the composer
+	savedAt       time.Time    // last successful settings save
+	userMenu      bool         // user-row popup menu open
+	settingsWin   *mygo.Window // the settings child window, if open
 
 	pending     *pendingApproval
 	alwaysAllow map[string]bool
@@ -385,6 +386,10 @@ func (a *app) sidebar(c *ui.Context) {
 					})
 					if entry.Clicked() {
 						a.userMenu = false
+						if it.page == "settings" {
+							a.openSettings()
+							return
+						}
 						if strings.HasPrefix(a.selectedID, "page:") {
 							a.selectedID = "" // 解除 page: 前缀对 page 的逐帧覆盖
 						}
@@ -1075,6 +1080,8 @@ func (a *app) setEnabled(name string, on bool) {
 
 // ---- settings view ----
 
+// settingsView is the headless/test fallback that renders the settings
+// cards in the main area. Production opens settingsBody in a child window.
 func (a *app) settingsView(c *ui.Context) {
 	t := c.Theme()
 	ui.Column(c).Fill().Children(func() {
@@ -1082,6 +1089,51 @@ func (a *app) settingsView(c *ui.Context) {
 			ui.Text(c, "设置").Bold()
 			ui.Spacer(c)
 		})
+		a.settingsBody(c)
+	})
+}
+
+// openSettings shows the settings child window (a real OS window that
+// stays on top of the main one), or focuses the existing one. Headless
+// runs (tests) have no window host and fall back to the main area.
+func (a *app) openSettings() {
+	if a.win == nil {
+		a.page = "settings"
+		return
+	}
+	if a.settingsWin != nil && !a.settingsWin.IsDestroyed() {
+		a.settingsWin.Focus()
+		return
+	}
+	a.settingsWin = mygo.NewWindow(mygo.WindowOptions{
+		Title:     "设置 · DeepSeek Harness",
+		Width:     640,
+		Height:    680,
+		MinWidth:  520,
+		MinHeight: 460,
+		Parent:    a.win,
+		StateKey:  "settings",
+		Content:   ui.View(a.settingsWindowView),
+	})
+	a.settingsWin.OnClosed(func() { a.settingsWin = nil })
+}
+
+// settingsWindowView is the content of the settings child window.
+func (a *app) settingsWindowView(c *ui.Context) {
+	c.SetTheme(a.theme)
+	ui.Column(c).Fill().Background(c.Theme().Background).Children(func() {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Padding(14, 18, 8).BorderWidth(0, 0, 1, 0).BorderColor(c.Theme().Border).Children(func() {
+			ui.Icon(c, icoGear).FontSize(14)
+			ui.Text(c, "设置 · DeepSeek Harness").Bold().FontSize(14)
+			ui.Spacer(c)
+		})
+		a.settingsBody(c)
+	})
+}
+
+func (a *app) settingsBody(c *ui.Context) {
+	t := c.Theme()
+	{
 		ui.List(c, &a.settingsList, 1, func(i int) {
 			ui.Column(c).Fill().Padding(20, 24).Gap(16).Children(func() {
 				// 模型
@@ -1162,7 +1214,7 @@ func (a *app) settingsView(c *ui.Context) {
 				})
 			})
 		}).Grow(1)
-	})
+	}
 }
 
 var epToolState = map[string]*bool{}
@@ -1230,6 +1282,9 @@ func (a *app) saveSettings() {
 	}
 	a.errText = ""
 	a.savedAt = time.Now()
+	if a.win != nil && !a.win.IsDestroyed() {
+		a.win.Update(func() {}) // 让主窗口立即反映模型/工作区变化
+	}
 }
 
 // ---- send / stop / compact / commands ----
