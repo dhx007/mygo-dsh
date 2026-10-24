@@ -1156,6 +1156,12 @@ func (a *app) settingsWindowView(c *ui.Context) {
 			if ui.Button(c, "打开配置文件").Clicked() {
 				a.revealConfig()
 			}
+			// macOS 上模态子窗口以 sheet 呈现，没有原生关闭按钮，这里补一个
+			if ui.Button(c, "✕").Width(30).Height(26).Clicked() {
+				if a.settingsWin != nil && !a.settingsWin.IsDestroyed() {
+					a.settingsWin.Close()
+				}
+			}
 		})
 		a.settingsBody(c)
 	})
