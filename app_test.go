@@ -360,6 +360,87 @@ func TestShellCardSettings(t *testing.T) {
 	}
 }
 
+// REQ-010 AC-2/3: session model override — persistence, agent rebuild,
+// global fallback and the /model command.
+func TestSessionModelSwitch(t *testing.T) {
+	a := newTestApp(t)
+	ses, err := a.store.New(a.cfg.WorkDir, "标准", "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.ses = ses // store.New 不挂到 app，模拟已加载会话
+	if a.effectiveModel() != a.cfg.Model {
+		t.Fatal("no override should follow the global default")
+	}
+
+	a.switchSessionModel("deepseek-reasoner")
+	if a.errText != "" {
+		t.Fatalf("switch: %s", a.errText)
+	}
+	if a.effectiveModel() != "deepseek-reasoner" || a.ag != nil {
+		t.Fatalf("override not applied: model=%q ag=%v", a.effectiveModel(), a.ag)
+	}
+	b, err := os.ReadFile(filepath.Join(a.store.Root, "s", ses.Meta.ID, "meta.json"))
+	if err != nil || !strings.Contains(string(b), "deepseek-reasoner") {
+		t.Errorf("meta.json not persisted: err=%v body=%s", err, b)
+	}
+	if ag := a.newAgentFor(ses); ag.Model != "deepseek-reasoner" {
+		t.Errorf("agent model = %q", ag.Model)
+	}
+
+	// /model 命令
+	a.command("/model deepseek-chat")
+	if a.effectiveModel() != "deepseek-chat" {
+		t.Fatalf("/model switch failed: %q", a.effectiveModel())
+	}
+	a.errText = ""
+	a.command("/model")
+	if !strings.Contains(a.errText, "用法") || !strings.Contains(a.errText, "deepseek-chat") {
+		t.Fatalf("usage: %q", a.errText)
+	}
+
+	// 无会话时报错
+	a2 := newTestApp(t)
+	a2.switchSessionModel("x")
+	if !strings.Contains(a2.errText, "先新建会话") {
+		t.Fatalf("no-session: %q", a2.errText)
+	}
+}
+
+// REQ-010 AC-4: the composer model control opens the picker and switching
+// updates the session.
+func TestComposerModelMenu(t *testing.T) {
+	a := newTestApp(t)
+	tt := ui.NewTester(a.view, 1200, 780)
+	tt.Frame()
+
+	if err := tt.Click("⊕ 新会话"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	a.modelOptions = []string{"deepseek-chat", "deepseek-reasoner"}
+	a.modelFetched = true // 预置清单，避免网络
+	tt.Frame()
+
+	if !tt.HasText("deepseek-chat") {
+		t.Errorf("model control text missing (texts=%v)", tt.Texts())
+	}
+	if err := tt.Click("deepseek-chat"); err != nil {
+		t.Fatalf("open menu: %v (texts=%v)", err, tt.Texts())
+	}
+	tt.Frame()
+	if !tt.HasText("本会话模型（全局默认在设置·模型）") {
+		t.Errorf("picker not open (texts=%v)", tt.Texts())
+	}
+	if err := tt.Click("deepseek-reasoner"); err != nil {
+		t.Fatalf("pick model: %v (texts=%v)", err, tt.Texts())
+	}
+	tt.Frame()
+	if a.ses.Meta.Model != "deepseek-reasoner" {
+		t.Fatalf("session model = %q", a.ses.Meta.Model)
+	}
+}
+
 // REQ-001 AC-6: dropping the agent releases the shell process; Close is idempotent.
 func TestDropAgentClosesShell(t *testing.T) {
 	a := newTestApp(t)

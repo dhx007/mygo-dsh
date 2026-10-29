@@ -23,10 +23,13 @@ type Session struct {
 }
 
 type SessionMeta struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	Workspace string    `json:"workspace"`
-	Mode      string    `json:"mode"`
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Workspace string `json:"workspace"`
+	Mode      string `json:"mode"`
+	// Model is the session-level model override; empty follows the global
+	// default (config.json), the original's per-session model selection.
+	Model     string    `json:"model,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

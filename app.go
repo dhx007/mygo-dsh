@@ -224,6 +224,11 @@ type app struct {
 	// Shell 设置卡（REQ-007）：一发式/持久 shell 的超时与输出上限
 	fShellTimeout, fShellCap string
 
+	// REQ-010：会话内模型选择器
+	modelMenu    bool
+	modelFetched bool
+	modelOptions []string
+
 	// preset editor
 	epOpen   bool
 	epLabel  string
@@ -361,6 +366,58 @@ func (a *app) onMain(fn func()) {
 func (a *app) enabledTool(name string) bool { return a.cfg.enabledTool(name) }
 
 func (a *app) experimentalOn(key string) bool { return a.cfg.experimentalOn(key) }
+
+// effectiveModel returns the session's model override or the global default.
+func (a *app) effectiveModel() string {
+	if a.ses != nil && a.ses.Meta.Model != "" {
+		return a.ses.Meta.Model
+	}
+	return a.cfg.Model
+}
+
+// ensureModels fetches the /models list once (async); on failure it falls
+// back to the built-in DeepSeek list plus the current model.
+func (a *app) ensureModels() {
+	if a.modelFetched {
+		return
+	}
+	a.modelFetched = true
+	client := llm.New(a.cfg.BaseURL, a.cfg.APIKey)
+	go func() {
+		list, err := client.ListModels(context.Background())
+		a.onMain(func() {
+			if err != nil || len(list) == 0 {
+				list = []string{"deepseek-chat", "deepseek-reasoner"}
+			}
+			if cur := a.effectiveModel(); cur != "" {
+				known := false
+				for _, m := range list {
+					if m == cur {
+						known = true
+					}
+				}
+				if !known {
+					list = append([]string{cur}, list...)
+				}
+			}
+			a.modelOptions = list
+		})
+	}()
+}
+
+// switchSessionModel sets the session-level model override (REQ-010).
+func (a *app) switchSessionModel(m string) {
+	if a.ses == nil {
+		a.errText = "先新建会话"
+		return
+	}
+	a.ses.Meta.Model = m
+	a.ses.Touch()
+	a.refreshSessions()
+	a.dropAgent()
+	a.modelMenu = false
+	a.note("本会话模型已切换为 " + m + "（下一条消息生效；全局默认不变）")
+}
 
 // currentPreset resolves the session's (or default) preset.
 func (a *app) currentPreset() *Preset {
@@ -777,10 +834,40 @@ func (a *app) chatTab(c *ui.Context) {
 						a.focusComposer = 2
 					}
 					if ui.Text(c, "/help 命令").TextColor(t.TextMuted).FontSize(12).Clicked() {
-						a.note("可用命令：/new 新会话 · /compact 压缩历史 · /fork 分叉会话 · /mode <名称> 切换模式 · /cwd <目录> 切换工作区 · /trajectory 轨迹 · /help 本帮助")
+						a.note("可用命令：/new 新会话 · /compact 压缩历史 · /fork 分叉会话 · /mode <名称> 切换模式 · /model <名> 切换本会话模型 · /cwd <目录> 切换工作区 · /trajectory 轨迹 · /help 本帮助")
 					}
 					ui.Spacer(c)
-					ui.Text(c, a.cfg.Model).TextColor(t.TextMuted).FontSize(12)
+					// 会话内模型选择器（REQ-010）：对齐原版 composer 控件
+					modelAnchor := ui.Row(c).Gap(4).AlignItems(ui.Center)
+					modelAnchor.Children(func() {
+						ui.Icon(c, icoBot).FontSize(11)
+						ui.Text(c, a.effectiveModel()).TextColor(t.TextMuted).FontSize(12)
+						ui.Icon(c, icoDown).FontSize(10)
+					})
+					if modelAnchor.Clicked() {
+						a.modelMenu = !a.modelMenu
+						a.ensureModels()
+					}
+					ui.Popover(c, modelAnchor, &a.modelMenu, func() {
+						ui.Column(c).Width(260).Gap(2).Children(func() {
+							ui.Text(c, "本会话模型（全局默认在设置·模型）").TextColor(t.TextMuted).FontSize(11).Padding(4, 6)
+							for _, m := range a.modelOptions {
+								model := m
+								row := ui.Row(c).Gap(8).AlignItems(ui.Center).Padding(6, 8).Radius(8)
+								row.Children(func() {
+									if model == a.effectiveModel() {
+										ui.Text(c, "●").TextColor(t.Accent).FontSize(10)
+									} else {
+										ui.Text(c, "○").TextColor(t.TextMuted).FontSize(10)
+									}
+									ui.Text(c, model).FontSize(12)
+								})
+								if row.Clicked() {
+									a.switchSessionModel(model)
+								}
+							}
+						})
+					})
 					if a.busy {
 						if ui.Button(c, "停止").Clicked() {
 							a.stop()
@@ -2720,7 +2807,7 @@ func (a *app) newAgentFor(ses *Session) *agent.Agent {
 	}
 	base := agent.Agent{
 		Client:       llm.New(a.cfg.BaseURL, a.cfg.APIKey),
-		Model:        a.cfg.Model,
+		Model:        a.effectiveModel(),
 		Temperature:  a.cfg.Temperature,
 		MaxTokens:    a.cfg.MaxTokens,
 		SystemPrompt: prompt,
@@ -2870,6 +2957,13 @@ func (a *app) command(text string) {
 		a.refreshSessions()
 		a.dropAgent()
 		a.note("工作区已切换：" + parts[1])
+	case "/model":
+		a.input = ""
+		if len(parts) < 2 {
+			a.errText = "用法：/model <模型名>（当前生效：" + a.effectiveModel() + "，全局默认：" + a.cfg.Model + "）"
+			return
+		}
+		a.switchSessionModel(strings.Join(parts[1:], " "))
 	default:
 		a.errText = "未知命令 " + parts[0] + "，/help 查看帮助"
 	}

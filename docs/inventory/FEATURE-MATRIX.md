@@ -102,7 +102,7 @@
 | `client-ui-attachment` / `dsh-attachment(-local)` / `client-file-upload` | 附件上传与读取（图片 read_image） | 无 | ❌ | P1 | — |
 | `client-ui-reference` | 输入框 @ 引用 | 无 | ❌ | P1 | — |
 | `dsh-commands` / `client-ui-commands` / `command-compact/-feedback/-goal` | 斜杠命令体系 | 🟡 /help /new /fork /compact /mode /cwd /trajectory | 🟡 | P1 | — |
-| `client-ui-model-selection`(-deepseek-model-label) | 会话内模型快速切换 | 仅设置页改全局模型 | 🟡 | P1 | — |
+| `client-ui-model-selection`(-deepseek-model-label) | 会话内模型快速切换 | ✅ composer 选择器（Popover + /models 拉取 + /model 命令，meta.model 会话级覆盖）（REQ-010） | ✅ | P1 | REQ-010 |
 | `dsh-message-feedback` / `client-ui-message-feedback` | 消息点赞/点踩 | 无 | ❌ | P2 | — |
 | `client-ui-secret-mask` | 秘钥掩码显示 | 无 | ❌ | P2 | — |
 | `dsh-client-shortcuts` / `client-ui-shortcuts` | 键盘快捷键体系 | 无（仅回车发送） | ❌ | P1 | — |
@@ -144,12 +144,12 @@
 
 | 状态 | 数量（截至 2026-10-30） |
 |---|---|
-| ✅ 已复刻 | 18 |
-| 🟡 部分复刻 | 24 |
+| ✅ 已复刻 | 19 |
+| 🟡 部分复刻 | 23 |
 | ❌ 未复刻 | 25 |
 | ⚪ 不逐包复刻 | 14 |
 
 > 排期建议：~~P0 插件集群（REQ-002~006）~~、~~REQ-007 Shell 输出落盘~~、
-> ~~REQ-008 工作区指令~~、~~REQ-009 后台任务~~（已完成）→ P1 继续：会话内模型切换、
-> 附件、快捷键、权限预设、自动标题（逐项立 REQ）。
+> ~~REQ-008 工作区指令~~、~~REQ-009 后台任务~~、~~REQ-010 会话内模型切换~~（已完成）→
+> P1 继续：附件、快捷键、权限预设、自动标题（逐项立 REQ）。
 > 活体核对新增候选：time-context、tool-ask-user、侧栏用量卡（token/calls/费用）。

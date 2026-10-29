@@ -218,3 +218,41 @@ func (c *Client) Chat(ctx context.Context, req Request, h StreamHandler) (Messag
 	}
 	return out, nil
 }
+
+// ListModels queries the provider's /models endpoint (OpenAI-compatible
+// GET) and returns the model ids sorted by name.
+func (c *Client) ListModels(ctx context.Context) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	httpResp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer httpResp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(httpResp.Body, 1024*1024))
+	if err != nil {
+		return nil, err
+	}
+	if httpResp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d: %s", httpResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var res struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &res); err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(res.Data))
+	for _, m := range res.Data {
+		if m.ID != "" {
+			ids = append(ids, m.ID)
+		}
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
