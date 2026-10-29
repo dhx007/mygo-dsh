@@ -77,7 +77,7 @@
 | `@deepseek-ai/cordis` + `cordis-plugin-loader/-group/-include/-timer` | 插件运行时：加载器/分组/包含/定时 | 无（插件=内置工具开关） | ❌ | **P0** | — |
 | `dsh-tool-cordis` / `client-ui-cordis` | 模型可用的插件管理工具（Creator 启用） | ✅ `plugins` 工具（list/info/enable/disable），按预设授权 + 开关门控 | ✅ | **P0** | REQ-002 |
 | `dsh-plugin-manager` / `client-ui-plugin-manager` | **插件管理器**（安装/启停/配置） | ✅ 三段式对齐活体结构（REQ-004）：内置清单卡+搜索+展开详情 / 实验插件开关（持久终端）/ 已装包（plugin.json 模型、子插件开关、Add plugin 本地+git、两步卸载）；更新检查缺 | 🟡 | **P0** | REQ-002 · REQ-004 |
-| `dsh-plugin-market`(+index, experimental-plugin-market-bundle) / `client-ui-plugin-market` | **插件市场**（浏览/安装第三方插件） | 无 | ❌ | **P0** | — |
+| `dsh-plugin-market`(+index, experimental-plugin-market-bundle) / `client-ui-plugin-market` | **插件市场**（浏览/安装第三方插件） | 🟡 自定义索引市场全流程（REQ-006）：实验开关门控 + markets.json 索引 + 浏览/一键安装；官方源/npm registry 缺 | 🟡 | **P0** | REQ-006 |
 | `dsh-plugin-package-inventory-deepseek` / `host-plugin-inventory` / `client-ui-settings-plugin-inventory` | 插件清单（盘点全部已装/内置） | ✅ 内置插件清单（12 项注册表，插件页/设置/模型工具同源）；第三方清单待 REQ-003+ | 🟡 | P1 | REQ-002 |
 | `dsh-config-editor` / `dsh-package-manifest` | 插件 patch/清单编辑（cordis.patch.yml 语义） | 🟡 清单以 plugin.json 等价承载（REQ-004）；patch 叠加语义无 | 🟡 | P1 | REQ-004 |
 | Web 插件（设置·Web 插件页） | 浏览器侧插件入口 | 设置有占位分区 | 🟡 | **P0** | — |
@@ -144,12 +144,12 @@
 | 状态 | 数量（截至 2026-10-30） |
 |---|---|
 | ✅ 已复刻 | 17 |
-| 🟡 部分复刻 | 22 |
-| ❌ 未复刻 | 28 |
+| 🟡 部分复刻 | 23 |
+| ❌ 未复刻 | 27 |
 | ⚪ 不逐包复刻 | 14 |
 
-> 排期建议（P0 集群）：~~REQ-002 插件体系骨架~~、~~REQ-003 技能系统~~、~~REQ-004 插件页
-> 三段式 + 本地插件包运行时~~、~~REQ-005 MCP 客户端~~（已完成）→ REQ-006 插件市场
-> （Discover 标签 + market index）。
+> 排期建议：~~P0 插件集群（REQ-002~006：骨架/技能/插件包/MCP/市场）~~**全部交付** →
+> 转 P1 体验集群：Shell 输出 64KB+spill、agent-instructions、tool-jobs、会话内模型切换、
+> 附件、快捷键、权限预设、自动标题（逐项立 REQ）。
 > 活体核对新增候选：Shell 输出 64KB+spill、agent-instructions（AGENTS.md/CLAUDE.md）、
 > tool-jobs、time-context、tool-ask-user、侧栏用量卡（token/calls/费用）。

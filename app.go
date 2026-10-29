@@ -208,6 +208,13 @@ type app struct {
 	confirmRemoveMCP string
 	mcpToolCache     map[string][]mcp.Tool
 
+	// REQ-006：插件市场（实验开关门控）
+	marketInput         string
+	marketLoading       bool
+	marketErr           string
+	marketEntries       []MarketEntry
+	confirmRemoveMarket string
+
 	// settings page
 	settingsList                 ui.ListState
 	fKey, fURL, fModel, fWorkDir string
@@ -1135,6 +1142,11 @@ func (a *app) pluginsView(c *ui.Context) {
 			"Keep shell processes alive across tool calls——所有含 bash 的模式都用持久 shell（原版同名实验插件）",
 			"persistent_terminals")
 	})
+	rows = append(rows, func(c *ui.Context) {
+		a.experimentalCard(c, "自定义插件市场",
+			"在插件页增加插件市场段：浏览并安装来自自定义索引的插件包（原版 Custom plugin markets）",
+			"custom_plugin_markets")
+	})
 
 	// 段 3：已安装插件包
 	rows = append(rows, a.sectionHeader(fmt.Sprintf("已安装插件 · %d", len(a.pkgCache))))
@@ -1142,6 +1154,22 @@ func (a *app) pluginsView(c *ui.Context) {
 	for _, pkg := range a.pkgCache {
 		p := pkg
 		rows = append(rows, func(c *ui.Context) { a.packageCard(c, p) })
+	}
+
+	// 段 3.5：插件市场（REQ-006，实验开关门控）
+	if a.experimentalOn("custom_plugin_markets") {
+		indexes := loadMarketIndexes(a.dataDir)
+		rows = append(rows, a.sectionHeader(fmt.Sprintf("插件市场 · %d 索引 · %d 条目", len(indexes), len(a.marketEntries))))
+		rows = append(rows, a.marketAddRow)
+		for _, idx := range indexes {
+			src := idx
+			rows = append(rows, func(c *ui.Context) { a.marketIndexRow(c, src) })
+		}
+		rows = append(rows, a.marketStatusRow)
+		for _, e := range a.marketEntries {
+			entry := e
+			rows = append(rows, func(c *ui.Context) { a.marketEntryCard(c, entry) })
+		}
 	}
 
 	// 段 4：MCP 服务器（REQ-005）
@@ -1373,6 +1401,157 @@ func (a *app) uninstallPackageUI(p PluginPackage) {
 	a.refreshPackages()
 	a.dropAgent()
 	a.note("插件包已卸载：" + p.Name)
+}
+
+// ---- 插件市场（REQ-006）----
+
+// marketAddRow adds one index (URL or local file path).
+func (a *app) marketAddRow(c *ui.Context) {
+	ui.Row(c).Gap(10).AlignItems(ui.Center).Padding(8, 12).Children(func() {
+		ui.TextInput(c, &a.marketInput).Placeholder("索引地址：https://…/market.json 或本地路径…").Grow(1)
+		if ui.Button(c, "添加索引").Clicked() {
+			a.addMarketIndex()
+		}
+	})
+}
+
+func (a *app) addMarketIndex() {
+	src := strings.TrimSpace(a.marketInput)
+	a.marketInput = ""
+	a.errText = ""
+	if src == "" {
+		a.errText = "请输入索引地址"
+		return
+	}
+	for _, existing := range loadMarketIndexes(a.dataDir) {
+		if existing == src {
+			a.errText = "索引已存在"
+			return
+		}
+	}
+	indexes := append(loadMarketIndexes(a.dataDir), src)
+	if err := saveMarketIndexes(a.dataDir, indexes); err != nil {
+		a.errText = "保存失败：" + err.Error()
+		return
+	}
+	a.refreshMarket()
+}
+
+func (a *app) marketIndexRow(c *ui.Context, src string) {
+	t := c.Theme()
+	ui.Row(c).Gap(10).AlignItems(ui.Center).Padding(6, 12).Children(func() {
+		ui.Text(c, "· "+ellipsis(src, 90)).FontSize(11).TextColor(t.TextMuted).Grow(1)
+		label := "删除"
+		if a.confirmRemoveMarket == src {
+			label = "确认删除"
+		}
+		if ui.Button(c, label).Clicked() {
+			a.removeMarketIndexUI(src)
+		}
+	})
+}
+
+func (a *app) removeMarketIndexUI(src string) {
+	if a.confirmRemoveMarket != src {
+		a.confirmRemoveMarket = src
+		return
+	}
+	a.confirmRemoveMarket = ""
+	var indexes []string
+	for _, existing := range loadMarketIndexes(a.dataDir) {
+		if existing != src {
+			indexes = append(indexes, existing)
+		}
+	}
+	if err := saveMarketIndexes(a.dataDir, indexes); err != nil {
+		a.errText = "保存失败：" + err.Error()
+		return
+	}
+	a.refreshMarket()
+}
+
+// marketStatusRow is the refresh control and fetch state.
+func (a *app) marketStatusRow(c *ui.Context) {
+	t := c.Theme()
+	ui.Row(c).Gap(10).AlignItems(ui.Center).Padding(6, 12).Children(func() {
+		if ui.Button(c, "刷新市场").Clicked() {
+			a.refreshMarket()
+		}
+		switch {
+		case a.marketLoading:
+			ui.Text(c, "拉取中…").FontSize(11).TextColor(t.TextMuted)
+		case a.marketErr != "":
+			ui.Text(c, "拉取失败："+ellipsis(a.marketErr, 80)).FontSize(11).TextColor(t.Danger)
+		case len(a.marketEntries) > 0:
+			ui.Text(c, fmt.Sprintf("共 %d 个可用插件包", len(a.marketEntries))).FontSize(11).TextColor(t.TextMuted)
+		default:
+			ui.Text(c, "点「刷新市场」加载索引条目").FontSize(11).TextColor(t.TextMuted)
+		}
+	})
+}
+
+// refreshMarket fetches all indexes off the UI thread and applies results
+// via onMain (inline in headless tests).
+func (a *app) refreshMarket() {
+	if a.marketLoading {
+		return
+	}
+	a.marketLoading = true
+	indexes := loadMarketIndexes(a.dataDir)
+	go func() {
+		entries, err := fetchAllIndexes(indexes)
+		a.onMain(func() {
+			a.marketLoading = false
+			a.marketErr = ""
+			if err != nil {
+				a.marketErr = err.Error()
+			}
+			a.marketEntries = entries
+		})
+	}()
+}
+
+// marketEntryCard is one installable package from the indexes.
+func (a *app) marketEntryCard(c *ui.Context, e MarketEntry) {
+	t := c.Theme()
+	installed := false
+	for _, pkg := range a.pkgCache {
+		if pkg.ID == e.ID {
+			installed = true
+		}
+	}
+	ui.Column(c).Grow(1).Gap(0).Padding(2, 8).Children(func() {
+		ui.Row(c).Gap(10).AlignItems(ui.Center).Padding(10, 12).Radius(10).BorderWidth(1).BorderColor(t.Border).Children(func() {
+			ui.Column(c).Grow(1).Gap(2).Children(func() {
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, e.Name).Bold().FontSize(13)
+					ui.Text(c, "v"+e.Version).FontSize(10).Padding(1, 6).Radius(6).Background(t.Background).TextColor(t.TextMuted)
+					ui.Text(c, e.Source).FontSize(10).Padding(1, 6).Radius(6).Background(t.Background).TextColor(t.TextMuted)
+				})
+				if e.Description != "" {
+					ui.Text(c, ellipsis(e.Description, 100)).TextColor(t.TextMuted).FontSize(11)
+				}
+				ui.Text(c, e.Origin).FontSize(10).TextColor(t.TextMuted)
+			})
+			if installed {
+				ui.Text(c, "已安装").FontSize(11).TextColor(t.Success)
+			} else if ui.Button(c, "安装").Clicked() {
+				a.installMarketEntry(e)
+			}
+		})
+	})
+}
+
+func (a *app) installMarketEntry(e MarketEntry) {
+	a.errText = ""
+	p, err := installFromMarketEntry(a.dataDir, e)
+	if err != nil {
+		a.errText = "安装失败：" + err.Error()
+		return
+	}
+	a.refreshPackages()
+	a.dropAgent()
+	a.note(fmt.Sprintf("已从市场安装：%s v%s（%d 个工具，下一条消息可用）", p.Name, p.Version, len(p.Tools)))
 }
 
 // ---- MCP 服务器（REQ-005）----

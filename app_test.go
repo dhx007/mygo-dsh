@@ -267,6 +267,57 @@ func TestPluginsPageMCP(t *testing.T) {
 	}
 }
 
+// REQ-006 AC-1/4: the market section is gated by the experimental switch;
+// adding a local index and refreshing lists entries; installing one puts
+// the package into the installed section.
+func TestPluginsPageMarket(t *testing.T) {
+	a := newTestApp(t)
+	a.selectedID = "page:plugins"
+	tt := ui.NewTester(a.view, 1200, 780)
+	tt.Frame()
+
+	a.pluginQuery = "zzz" // 收缩内置清单
+	tt.Frame()
+	if tt.HasText("插件市场 ·") {
+		t.Error("market section should be hidden before the switch")
+	}
+	a.setExperimental("custom_plugin_markets", true)
+	tt.Frame()
+	if !tt.HasText("自定义插件市场") || !tt.HasText("插件市场 · 0 索引") {
+		t.Errorf("market section missing after switch (texts=%v)", tt.Texts())
+	}
+
+	// 本地 git 仓库作为 origin，本地索引文件
+	repo := t.TempDir()
+	makeGitPluginRepo(t, repo, "mkt-pack")
+	idx := filepath.Join(t.TempDir(), "market.json")
+	if err := os.WriteFile(idx, []byte(`{"name":"t","plugins":[
+		{"id":"mkt-pack","name":"市场包","version":"1.0.0","description":"来自市场","source":"git","origin":"`+repo+`"}
+	]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a.marketInput = idx
+	a.addMarketIndex()
+	if a.errText != "" {
+		t.Fatalf("add index failed: %s", a.errText)
+	}
+	waitFor(t, func() bool { return len(a.marketEntries) == 1 }, "market fetch never finished")
+	tt.Frame()
+	if !tt.HasText("市场包") || !tt.HasText("v1.0.0") || !tt.HasText("刷新市场") {
+		t.Errorf("market entries missing (texts=%v)", tt.Texts())
+	}
+
+	// 安装 → 已安装段出现，条目卡变为「已安装」
+	if err := tt.Click("安装"); err != nil {
+		t.Fatalf("click 安装: %v (texts=%v)", err, tt.Texts())
+	}
+	waitFor(t, func() bool { return len(a.pkgCache) == 1 }, "install never finished")
+	tt.Frame()
+	if !tt.HasText("已安装") {
+		t.Errorf("installed marker missing (texts=%v)", tt.Texts())
+	}
+}
+
 // REQ-001 AC-6: dropping the agent releases the shell process; Close is idempotent.
 func TestDropAgentClosesShell(t *testing.T) {
 	a := newTestApp(t)

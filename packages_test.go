@@ -100,17 +100,7 @@ func TestInstallUninstallPackage(t *testing.T) {
 func TestInstallFromGit(t *testing.T) {
 	dataDir := t.TempDir()
 	repo := t.TempDir()
-	writePluginSource(t, repo, "git-pack")
-	run := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = repo
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	run("init")
-	run("add", ".")
-	run("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init")
+	makeGitPluginRepo(t, repo, "git-pack")
 
 	p, err := installFromGit(dataDir, repo)
 	if err != nil {
@@ -129,6 +119,23 @@ func TestInstallFromGit(t *testing.T) {
 			t.Fatalf("clone temp dir leaked: %s", e.Name())
 		}
 	}
+}
+
+// makeGitPluginRepo writes a valid plugin package into dir and turns it
+// into a local git repository (usable as a clone origin in tests).
+func makeGitPluginRepo(t *testing.T, dir, id string) {
+	t.Helper()
+	writePluginSource(t, dir, id)
+	run := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init")
+	run("add", ".")
+	run("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init")
 }
 
 // REQ-004 FR-3: package state mirrors the original's On / Partially on / Off.
