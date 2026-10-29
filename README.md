@@ -15,6 +15,7 @@
 | `/compact` 自动历史压缩 | ✅ `/compact` 用模型生成摘要替换历史，轨迹留痕 |
 | 子代理 / 规划 | ✅ `task` 工具（一层深子代理）；`todo` 工具渲染成任务清单卡片 |
 | 一切皆插件 | ✅ 插件页三段式对齐原版：内置插件清单卡（搜索 + 展开详情）· 实验插件开关（持久终端）· 已装插件包（plugin.json 包模型 + 子插件开关 + 本地/git 安装 + 卸载）；模型可用 `plugins` 工具管理（创造模式）；包工具在 goja 沙箱执行（复用 PTC 桥，30s 超时） |
+| MCP 客户端 | ✅ stdio JSONRPC（纯标准库）：mcp.json 配置服务器，插件页「MCP 服务器」段添加/删除/启停/看错误，工具以 `mcp_<服务器>_<工具>` 挂载并默认走审批门 |
 | 技能（skills） | ✅ 双目录 SKILL.md 发现（数据目录 `skills/` 与工作区 `.harness/skills/`，工作区覆盖全局），模型 `skill` 工具 list/run 按需加载指令，设置·技能分区展示 |
 | 设置 → 模型（DeepSeek，DEEPSEEK_API_KEY） | ✅ 模态设置子窗口（打开期间主窗口锁定）：账号与余额（/user/balance 真实查询）/ 通用设置 / 模型 / 内置插件 / Agent 预设 / 已归档会话 / Web 插件 / 皮肤（暖黑·深海·森绿）/ 宠物 / 创意工坊 / 使用统计；入口在左下角用户菜单 |
 
@@ -49,8 +50,10 @@ config.go          配置（Key/模型/工作区/插件开关/自动审批）
 app.go             全部 UI：侧栏、时间线、审批卡、轨迹页、插件页、设置页、/命令
 app_test.go        ui.Tester 无头 UI 流程测试
 internal/llm/      DeepSeek SSE 客户端（流式 + tool_calls 增量组装）
-internal/agent/    Agent 循环：审批门、todo、task 子代理、PTC 执行器
+internal/agent/    Agent 循环：审批门、todo、task 子代理、PTC 执行器、插件包运行时
+internal/mcp/      MCP stdio JSONRPC 客户端（initialize/tools.list/tools.call）
 internal/tools/    bash / 持久 shell / read_file / write_file / edit_file / glob / grep / web_fetch / web_search
+mcp.go             MCP 管理器：mcp.json 配置、懒连接、工具 spec 组装、错误态
 ```
 
 ## 文档

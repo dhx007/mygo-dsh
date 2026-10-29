@@ -40,6 +40,7 @@ func builtinPlugins() []Plugin {
 		{ID: "run_code", Name: "PTC 脚本", Description: "模型写一段 JavaScript，把多次工具操作合并成一次执行", Version: "0.1.0", Category: "循环", Source: "内置", Tools: []string{"run_code"}, Kind: "tool"},
 		{ID: "plugins", Name: "插件管理", Description: "模型侧的插件管理工具：列出、查询、启用、停用插件（创造模式默认挂载）", Version: "0.1.0", Category: "系统", Source: "内置", Tools: []string{"plugins"}, Kind: "control"},
 		{ID: "skill", Name: "技能", Description: "SKILL.md 技能包：模型可列出并按需加载技能指令（标准/创造模式默认挂载）", Version: "0.1.0", Category: "系统", Source: "内置", Tools: []string{"skill"}, Kind: "tool"},
+		{ID: "mcp", Name: "MCP", Description: "Model Context Protocol 服务器（stdio JSONRPC）：外部工具接入插件页第四段，工具默认走审批门", Version: "0.1.0", Category: "系统", Source: "内置", Tools: []string{"mcp"}, Kind: "control"},
 	}
 }
 

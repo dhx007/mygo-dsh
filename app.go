@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +20,7 @@ import (
 
 	"mygo-harness/internal/agent"
 	"mygo-harness/internal/llm"
+	"mygo-harness/internal/mcp"
 	"mygo-harness/internal/tools"
 )
 
@@ -198,6 +200,14 @@ type app struct {
 	confirmUninstall string
 	pkgCache         []PluginPackage
 
+	// REQ-005：MCP 服务器管理（插件页第四段）
+	mcp              *MCPManager
+	mcpNameInput     string
+	mcpCmdInput      string
+	mcpOpen          map[string]*bool
+	confirmRemoveMCP string
+	mcpToolCache     map[string][]mcp.Tool
+
 	// settings page
 	settingsList                 ui.ListState
 	fKey, fURL, fModel, fWorkDir string
@@ -230,6 +240,8 @@ func newApp() *app {
 		trajOpen:      map[int]*bool{},
 		pluginOpen:    map[string]*bool{},
 		pkgOpen:       map[string]*bool{},
+		mcpOpen:       map[string]*bool{},
+		mcpToolCache:  map[string][]mcp.Tool{},
 		focusComposer: 1,
 		fKey:          cfg.APIKey,
 		fURL:          cfg.BaseURL,
@@ -253,6 +265,7 @@ func newApp() *app {
 	a.presets = loadPresets(dir)
 	a.refreshSessions()
 	a.refreshPackages()
+	a.mcp = newMCPManager(dir)
 	return a
 }
 
@@ -1130,6 +1143,15 @@ func (a *app) pluginsView(c *ui.Context) {
 		p := pkg
 		rows = append(rows, func(c *ui.Context) { a.packageCard(c, p) })
 	}
+
+	// 段 4：MCP 服务器（REQ-005）
+	names := a.mcpServerNames()
+	rows = append(rows, a.sectionHeader(fmt.Sprintf("MCP 服务器 · %d", len(names))))
+	rows = append(rows, a.mcpAddRow)
+	for _, name := range names {
+		n := name
+		rows = append(rows, func(c *ui.Context) { a.mcpServerCard(c, n) })
+	}
 	rows = append(rows, a.pluginsFooter)
 
 	ui.Column(c).Fill().Children(func() {
@@ -1351,6 +1373,149 @@ func (a *app) uninstallPackageUI(p PluginPackage) {
 	a.refreshPackages()
 	a.dropAgent()
 	a.note("插件包已卸载：" + p.Name)
+}
+
+// ---- MCP 服务器（REQ-005）----
+
+func (a *app) mcpServerNames() []string {
+	servers := loadMCPServers(a.dataDir)
+	names := make([]string, 0, len(servers))
+	for n := range servers {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// mcpAddRow is the add-server form of the MCP section.
+func (a *app) mcpAddRow(c *ui.Context) {
+	ui.Row(c).Gap(10).AlignItems(ui.Center).Padding(8, 12).Children(func() {
+		ui.TextInput(c, &a.mcpNameInput).Placeholder("名称（如 sqlite）").Width(140)
+		ui.TextInput(c, &a.mcpCmdInput).Placeholder("启动命令，空格分词（如 uvx mcp-server-sqlite）…").Grow(1)
+		if ui.Button(c, "添加服务器").Clicked() {
+			a.addMCPServer()
+		}
+	})
+}
+
+// addMCPServer validates and persists one server (command split by spaces).
+func (a *app) addMCPServer() {
+	name := strings.TrimSpace(a.mcpNameInput)
+	cmdline := strings.TrimSpace(a.mcpCmdInput)
+	a.mcpNameInput, a.mcpCmdInput = "", ""
+	a.errText = ""
+	switch {
+	case name == "":
+		a.errText = "请输入服务器名称"
+		return
+	case !pkgIDRe.MatchString(name):
+		a.errText = "名称仅限小写字母/数字/-/_.（字母开头）"
+		return
+	case cmdline == "":
+		a.errText = "请输入启动命令"
+		return
+	}
+	servers := loadMCPServers(a.dataDir)
+	if _, ok := servers[name]; ok {
+		a.errText = "MCP 服务器 " + name + " 已存在"
+		return
+	}
+	fields := strings.Fields(cmdline)
+	servers[name] = MCPServerConfig{Command: fields[0], Args: fields[1:]}
+	if err := saveMCPServers(a.dataDir, servers); err != nil {
+		a.errText = "保存失败：" + err.Error()
+		return
+	}
+	a.dropAgent()
+	a.note("MCP 服务器已添加：" + name + "（工具从下一条消息开始可用）")
+}
+
+// removeMCPServerUI deletes a server after two-step confirmation.
+func (a *app) removeMCPServerUI(name string) {
+	if a.confirmRemoveMCP != name {
+		a.confirmRemoveMCP = name
+		return
+	}
+	a.confirmRemoveMCP = ""
+	servers := loadMCPServers(a.dataDir)
+	delete(servers, name)
+	if err := saveMCPServers(a.dataDir, servers); err != nil {
+		a.errText = "保存失败：" + err.Error()
+		return
+	}
+	a.mcp.forget(name)
+	a.dropAgent()
+	a.note("MCP 服务器已删除：" + name)
+}
+
+// mcpServerCard is one configured server: name + command + state, with
+// expandable tool list, server switch and two-step removal.
+func (a *app) mcpServerCard(c *ui.Context, name string) {
+	t := c.Theme()
+	cfg := loadMCPServers(a.dataDir)[name]
+	open := a.boolRef(a.mcpOpen, name)
+	on := a.enabledTool("mcp/" + name)
+	ui.Column(c).Grow(1).Gap(0).Padding(2, 8).Children(func() {
+		row := ui.Row(c).Gap(10).AlignItems(ui.Center).Padding(10, 12).Radius(10).BorderWidth(1).BorderColor(t.Border)
+		row.Children(func() {
+			ui.Column(c).Grow(1).Gap(2).Children(func() {
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, name).Bold().FontSize(13)
+					ui.Text(c, cfg.Command+" "+strings.Join(cfg.Args, " ")).FontSize(10).TextColor(t.TextMuted)
+				})
+				if msg := a.mcp.serverErr(name); msg != "" {
+					ui.Text(c, "最近错误："+ellipsis(msg, 90)).TextColor(t.Danger).FontSize(10)
+				} else {
+					ui.Text(c, "未连接（首次调用时启动）").TextColor(t.TextMuted).FontSize(10)
+				}
+			})
+			pluginBadge(c, on)
+			if *open {
+				ui.Text(c, "▾").TextColor(t.TextMuted)
+			} else {
+				ui.Text(c, "▸").TextColor(t.TextMuted)
+			}
+		})
+		if row.Clicked() {
+			*open = !*open
+		}
+		if *open {
+			ui.Column(c).Gap(6).Padding(10, 14).Children(func() {
+				if tools, ok := a.mcpToolCache[name]; ok {
+					for _, tl := range tools {
+						ui.Text(c, "· "+mcpSpecName(name, tl.Name)+" — "+ellipsis(tl.Description, 80)).TextColor(t.TextMuted).FontSize(10)
+					}
+				} else {
+					if ui.Button(c, "加载工具清单").Clicked() {
+						if cl, err := a.mcp.ClientFor(name); err == nil {
+							if list, lerr := cl.ListTools(); lerr == nil {
+								a.mcpToolCache[name] = list
+							} else {
+								a.errText = "加载失败：" + lerr.Error()
+							}
+						} else {
+							a.errText = "连接失败：" + err.Error()
+						}
+					}
+				}
+				sw := a.enabledTool("mcp/" + name)
+				ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "启用").FontSize(12)
+					ui.Switch(c, &sw)
+				})
+				if sw != a.enabledTool("mcp/"+name) {
+					a.setEnabled("mcp/"+name, sw)
+				}
+				label := "删除"
+				if a.confirmRemoveMCP == name {
+					label = "再次点击确认删除"
+				}
+				if ui.Button(c, label).Clicked() {
+					a.removeMCPServerUI(name)
+				}
+			})
+		}
+	})
 }
 
 func (a *app) setEnabled(name string, on bool) {
@@ -2364,6 +2529,25 @@ func (a *app) newAgentFor(ses *Session) *agent.Agent {
 		base.PackageSpecs = pkgSpecs
 		base.PackageTools = runners
 		base.MutatingTools = mutating
+	}
+	// MCP 服务器工具走同一通道（REQ-005）；总开关 mcp + 服务器级 mcp/<名>
+	if a.enabledTool("mcp") {
+		mcpSpecs, mcpRunners, mcpMutating := a.mcp.collectSpecs(a)
+		if len(mcpSpecs) > 0 {
+			base.PackageSpecs = append(base.PackageSpecs, mcpSpecs...)
+			if base.PackageTools == nil {
+				base.PackageTools = map[string]func(ctx context.Context, argsJSON string) (string, bool){}
+			}
+			for k, v := range mcpRunners {
+				base.PackageTools[k] = v
+			}
+			if base.MutatingTools == nil {
+				base.MutatingTools = map[string]bool{}
+			}
+			for k, v := range mcpMutating {
+				base.MutatingTools[k] = v
+			}
+		}
 	}
 	if preset.PersistentShell {
 		base.Shell = tools.NewPersistentShell(ses.Meta.Workspace)

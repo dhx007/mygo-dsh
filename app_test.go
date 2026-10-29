@@ -228,6 +228,45 @@ func TestSettingsSkillsSection(t *testing.T) {
 	}
 }
 
+// REQ-005 AC-5: the MCP section renders servers (add form, card, two-step
+// delete) and persists to mcp.json.
+func TestPluginsPageMCP(t *testing.T) {
+	a := newTestApp(t)
+	a.selectedID = "page:plugins"
+	tt := ui.NewTester(a.view, 1200, 780)
+	tt.Frame()
+
+	a.mcpNameInput = "sqlite"
+	a.mcpCmdInput = "uvx mcp-server-sqlite --db test.db"
+	a.addMCPServer()
+	if a.errText != "" {
+		t.Fatalf("add failed: %s", a.errText)
+	}
+	a.pluginQuery = "zzz" // 收缩内置清单，让 MCP 段进入视口
+	tt.Frame()
+	if !tt.HasText("MCP 服务器 · 1") || !tt.HasText("sqlite") || !tt.HasText("添加服务器") {
+		t.Errorf("MCP section missing (texts=%v)", tt.Texts())
+	}
+	if err := tt.Click("sqlite"); err != nil {
+		t.Fatalf("expand server: %v (texts=%v)", err, tt.Texts())
+	}
+	tt.Frame()
+	if !tt.HasText("加载工具清单") || !tt.HasText("删除") {
+		t.Errorf("server detail missing (texts=%v)", tt.Texts())
+	}
+	if err := tt.Click("删除"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if err := tt.Click("再次点击确认删除"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if len(loadMCPServers(a.dataDir)) != 0 {
+		t.Errorf("server still configured after delete")
+	}
+}
+
 // REQ-001 AC-6: dropping the agent releases the shell process; Close is idempotent.
 func TestDropAgentClosesShell(t *testing.T) {
 	a := newTestApp(t)
@@ -259,7 +298,7 @@ func TestPluginsPageSections(t *testing.T) {
 
 	a.selectedID = "page:plugins"
 	tt.Frame()
-	if !tt.HasText("内置插件 · 13") || !tt.HasText("Shell 终端") {
+	if !tt.HasText("内置插件 · 14") || !tt.HasText("Shell 终端") {
 		t.Errorf("builtin section missing (texts=%v)", tt.Texts())
 	}
 
@@ -403,7 +442,7 @@ func TestSettingsPluginsSectionGrouped(t *testing.T) {
 	tt := ui.NewTester(a.settingsWindowView, 960, 700)
 	tt.Frame()
 
-	for _, want := range []string{"13 个内置插件", "Shell 终端", "读文件", "Enabled"} {
+	for _, want := range []string{"14 个内置插件", "Shell 终端", "读文件", "Enabled"} {
 		if !tt.HasText(want) {
 			t.Errorf("settings 内置插件 missing %q (texts=%v)", want, tt.Texts())
 		}

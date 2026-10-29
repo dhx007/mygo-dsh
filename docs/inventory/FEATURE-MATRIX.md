@@ -68,7 +68,7 @@
 | `dsh-tool-present` / `client-ui-deliverables` | 交付物展示面板 | 无 | ❌ | P2 | — |
 | `dsh-tool-ralph` / `experimental-ralph-bundle` | Ralph 自动循环 | 无 | ❌ | P2 | — |
 | `dsh-tool-workspace-dependencies` | 工作区依赖安装 | 无 | ❌ | P2 | — |
-| `dsh-mcp-client` / `dsh-mcp-resources` | **MCP 客户端**（外部工具接入） | 无 | ❌ | **P0** | — |
+| `dsh-mcp-client` / `dsh-mcp-resources` | **MCP 客户端**（外部工具接入） | 🟡 tools 域全链路（REQ-005）：stdio JSONRPC 客户端 + mcp.json 配置 + 插件页 MCP 段 + 审批门；resources/SSE 缺 | 🟡 | **P0** | REQ-005 |
 
 ## 4. 插件体系（cordis）— P0 主战场
 
@@ -144,12 +144,12 @@
 | 状态 | 数量（截至 2026-10-30） |
 |---|---|
 | ✅ 已复刻 | 17 |
-| 🟡 部分复刻 | 21 |
-| ❌ 未复刻 | 29 |
+| 🟡 部分复刻 | 22 |
+| ❌ 未复刻 | 28 |
 | ⚪ 不逐包复刻 | 14 |
 
 > 排期建议（P0 集群）：~~REQ-002 插件体系骨架~~、~~REQ-003 技能系统~~、~~REQ-004 插件页
-> 三段式 + 本地插件包运行时~~（已完成）→ REQ-005 MCP 客户端 → REQ-006 插件市场
+> 三段式 + 本地插件包运行时~~、~~REQ-005 MCP 客户端~~（已完成）→ REQ-006 插件市场
 > （Discover 标签 + market index）。
 > 活体核对新增候选：Shell 输出 64KB+spill、agent-instructions（AGENTS.md/CLAUDE.md）、
 > tool-jobs、time-context、tool-ask-user、侧栏用量卡（token/calls/费用）。
