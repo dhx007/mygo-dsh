@@ -65,6 +65,28 @@ type Agent struct {
 	Depth int
 	// Specs is the preset tool set; todo and task are added dynamically.
 	Specs []llm.ToolSpec
+	// Shell, when set, runs the bash tool in a persistent shell whose
+	// env/cwd survive across calls (the original's minimal preset).
+	// Close it when the agent is discarded.
+	Shell *tools.PersistentShell
+	// PluginTool, when set, mounts the plugins management tool (list /
+	// info / enable / disable) — the original only enables it for the
+	// creator preset with an editable profile.
+	PluginTool func(action, plugin string) (string, bool)
+	// SkillTool, when set, mounts the skills tool (list / run) over the
+	// discovered SKILL.md packs.
+	SkillTool func(action, name string) (string, bool)
+	// PackageTools routes installed plugin-package tools (name → runner);
+	// MutatingTools marks which of them need the approval gate.
+	PackageTools  map[string]func(ctx context.Context, argsJSON string) (string, bool)
+	MutatingTools map[string]bool
+	// PackageSpecs are the installed packages' tool schemas; mounted at
+	// depth 0 and gated per name by PluginEnabled.
+	PackageSpecs []llm.ToolSpec
+	// PluginEnabled, when set, is asked for every tool spec before each
+	// Run so plugins toggled off (by the user or by the plugins tool)
+	// disappear from the next message's toolset.
+	PluginEnabled func(id string) bool
 	// Subagent builds the child agent for the task tool (depth 0 only).
 	Subagent func() *Agent
 
@@ -114,6 +136,75 @@ var taskSpec = llm.ToolSpec{
 	},
 }
 
+var skillSpec = llm.ToolSpec{
+	Type: "function",
+	Function: llm.ToolDef{
+		Name: "skill",
+		Description: "Use the installed skills (SKILL.md instruction packs): list them " +
+			"with their descriptions, or run one to load its full instructions and follow them. " +
+			"Run a skill when the task matches its description.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"action": map[string]any{"type": "string", "enum": []string{"list", "run"}, "description": "list all skills, or run one by name."},
+				"name":   map[string]any{"type": "string", "description": "Skill name; required for run."},
+			},
+			"required": []string{"action"},
+		},
+	},
+}
+
+var pluginSpec = llm.ToolSpec{
+	Type: "function",
+	Function: llm.ToolDef{
+		Name: "plugins",
+		Description: "Manage the harness's plugins: list them with their on/off state, " +
+			"inspect one, enable or disable it. Disabling a tool plugin removes its tool " +
+			"from your toolset in the next turn — be careful, especially with bash; the " +
+			"user can always re-enable it in the plugins page.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"action": map[string]any{"type": "string", "enum": []string{"list", "info", "enable", "disable"}, "description": "What to do."},
+				"plugin": map[string]any{"type": "string", "description": "Plugin id; required for info/enable/disable."},
+			},
+			"required": []string{"action"},
+		},
+	},
+}
+
+// toolSpecs assembles the toolset for one Run: the preset specs (minus
+// plugins toggled off), the todo checklist, and — depth 0 only — the task
+// delegator and the plugins manager when wired.
+func (a *Agent) toolSpecs() []llm.ToolSpec {
+	specs := make([]llm.ToolSpec, 0, len(a.Specs)+3)
+	for _, sp := range a.Specs {
+		if a.PluginEnabled != nil && !a.PluginEnabled(sp.Function.Name) {
+			continue
+		}
+		specs = append(specs, sp)
+	}
+	specs = append(specs, todoSpec)
+	if a.Depth == 0 && a.Subagent != nil {
+		specs = append(specs, taskSpec)
+	}
+	if a.Depth == 0 && a.PluginTool != nil && (a.PluginEnabled == nil || a.PluginEnabled("plugins")) {
+		specs = append(specs, pluginSpec)
+	}
+	if a.Depth == 0 && a.SkillTool != nil && (a.PluginEnabled == nil || a.PluginEnabled("skill")) {
+		specs = append(specs, skillSpec)
+	}
+	if a.Depth == 0 {
+		for _, sp := range a.PackageSpecs {
+			if a.PluginEnabled != nil && !a.PluginEnabled(sp.Function.Name) {
+				continue
+			}
+			specs = append(specs, sp)
+		}
+	}
+	return specs
+}
+
 // Run processes one user message to completion. The returned error is
 // also passed to OnDone.
 func (a *Agent) Run(ctx context.Context, userText string, cb Callbacks) error {
@@ -122,9 +213,15 @@ func (a *Agent) Run(ctx context.Context, userText string, cb Callbacks) error {
 	if maxTurns <= 0 {
 		maxTurns = defaultMaxTurns
 	}
-	specs := append(append([]llm.ToolSpec{}, a.Specs...), todoSpec)
-	if a.Depth == 0 && a.Subagent != nil {
-		specs = append(specs, taskSpec)
+	specs := a.toolSpecs()
+	if a.Shell != nil {
+		for i, sp := range specs {
+			if sp.Function.Name == "bash" {
+				sp.Function.Description += " This shell is persistent: the working " +
+					"directory, exported variables and shell options persist across calls."
+				specs[i] = sp
+			}
+		}
 	}
 
 	var runErr error
@@ -140,7 +237,7 @@ func (a *Agent) Run(ctx context.Context, userText string, cb Callbacks) error {
 		req := llm.Request{
 			Model:       a.Model,
 			Messages:    a.requestMessages(),
-			Tools:       specs,
+			Tools:       a.toolSpecs(),
 			Temperature: a.Temperature,
 			MaxTokens:   a.MaxTokens,
 		}
@@ -238,6 +335,32 @@ func (a *Agent) execTool(ctx context.Context, tc llm.ToolCall, cb Callbacks) (re
 	case "task":
 		return a.runSubagent(ctx, tc, cb)
 
+	case "plugins":
+		if a.PluginTool == nil {
+			return "error: plugins 工具未挂载（当前预设不提供插件管理）", true
+		}
+		var a2 struct {
+			Action string `json:"action"`
+			Plugin string `json:"plugin"`
+		}
+		if err := json.Unmarshal([]byte(tc.Function.Arguments), &a2); err != nil {
+			return "error: 参数不是合法 JSON: " + err.Error(), true
+		}
+		return a.PluginTool(a2.Action, a2.Plugin)
+
+	case "skill":
+		if a.SkillTool == nil {
+			return "error: skill 工具未挂载（当前预设不提供技能）", true
+		}
+		var a2 struct {
+			Action string `json:"action"`
+			Name   string `json:"name"`
+		}
+		if err := json.Unmarshal([]byte(tc.Function.Arguments), &a2); err != nil {
+			return "error: 参数不是合法 JSON: " + err.Error(), true
+		}
+		return a.SkillTool(a2.Action, a2.Name)
+
 	case "run_code":
 		if d := a.approve(cb, tc, "run_code"); d == Deny {
 			return deniedResult(), true
@@ -245,6 +368,14 @@ func (a *Agent) execTool(ctx context.Context, tc llm.ToolCall, cb Callbacks) (re
 		return a.runCode(ctx, tc)
 
 	default:
+		if runner, ok := a.PackageTools[tc.Function.Name]; ok {
+			if a.MutatingTools[tc.Function.Name] {
+				if d := a.approve(cb, tc, tc.Function.Name); d == Deny {
+					return deniedResult(), true
+				}
+			}
+			return runner(ctx, tc.Function.Arguments)
+		}
 		t := tools.ByName(tc.Function.Name)
 		if t == nil {
 			return "error: unknown tool " + tc.Function.Name, true
@@ -253,6 +384,9 @@ func (a *Agent) execTool(ctx context.Context, tc llm.ToolCall, cb Callbacks) (re
 			if d := a.approve(cb, tc, t.Name); d == Deny {
 				return deniedResult(), true
 			}
+		}
+		if tc.Function.Name == "bash" && a.Shell != nil {
+			return a.Shell.Run(ctx, tc.Function.Arguments)
 		}
 		return t.Run(ctx, tc.Function.Arguments, a.WorkDir)
 	}
@@ -330,6 +464,9 @@ func (a *Agent) runCode(ctx context.Context, tc llm.ToolCall) (string, bool) {
 	}
 	return runPTCCode(ctx, a2.Code, a.WorkDir, func(rawName, argsJSON string) (string, bool) {
 		name := strings.TrimSuffix(rawName, "_raw")
+		if name == "bash" && a.Shell != nil {
+			return a.Shell.Run(ctx, argsJSON)
+		}
 		t := tools.ByName(name)
 		if t == nil {
 			return "error: unknown tool " + name, true

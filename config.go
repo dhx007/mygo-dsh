@@ -21,6 +21,10 @@ type Config struct {
 	EnabledTools map[string]bool `json:"enabled_tools,omitempty"`
 	AutoApprove  bool            `json:"auto_approve"`
 	Theme        string          `json:"theme"`
+	// Experimental holds the plugins-page experimental switches (e.g.
+	// "persistent_terminals" — keep shells alive across tool calls for
+	// every preset, the original's experimental plugin).
+	Experimental map[string]bool `json:"experimental,omitempty"`
 }
 
 func defaultConfig() *Config {
@@ -108,4 +112,9 @@ func (c *Config) enabledTool(name string) bool {
 		return true
 	}
 	return v
+}
+
+// experimentalOn reports whether an experimental switch is enabled.
+func (c *Config) experimentalOn(name string) bool {
+	return c.Experimental != nil && c.Experimental[name]
 }

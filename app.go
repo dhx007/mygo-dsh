@@ -189,6 +189,14 @@ type app struct {
 
 	// plugins page
 	pluginList ui.ListState
+	// REQ-004：内置清单搜索（页/设置各记一份）、详情展开、安装输入、卸载确认
+	pluginQuery      string
+	setPluginQuery   string
+	pluginOpen       map[string]*bool
+	pkgOpen          map[string]*bool
+	installInput     string
+	confirmUninstall string
+	pkgCache         []PluginPackage
 
 	// settings page
 	settingsList                 ui.ListState
@@ -220,6 +228,8 @@ func newApp() *app {
 		wsOpen:        map[string]*bool{},
 		navOpen:       true,
 		trajOpen:      map[int]*bool{},
+		pluginOpen:    map[string]*bool{},
+		pkgOpen:       map[string]*bool{},
 		focusComposer: 1,
 		fKey:          cfg.APIKey,
 		fURL:          cfg.BaseURL,
@@ -242,10 +252,33 @@ func newApp() *app {
 	a.store = newStore(filepath.Join(dir, "profiles"))
 	a.presets = loadPresets(dir)
 	a.refreshSessions()
+	a.refreshPackages()
 	return a
 }
 
 func (a *app) refreshSessions() { a.sessions = a.store.List() }
+
+// refreshPackages rescans installed plugin packages (startup + install/uninstall).
+func (a *app) refreshPackages() { a.pkgCache = installedPackages(a.dataDir) }
+
+// boolRef lazily allocates a toggle for detail-expand state.
+func (a *app) boolRef(m map[string]*bool, key string) *bool {
+	if b, ok := m[key]; ok {
+		return b
+	}
+	v := false
+	m[key] = &v
+	return &v
+}
+
+// setExperimental persists an experimental switch (REQ-004 FR-2).
+func (a *app) setExperimental(key string, on bool) {
+	if a.cfg.Experimental == nil {
+		a.cfg.Experimental = map[string]bool{}
+	}
+	a.cfg.Experimental[key] = on
+	_ = saveConfig(a.cfg, a.cfgPath)
+}
 
 // onMain runs fn on the UI thread; headless tests (no window) run inline.
 func (a *app) onMain(fn func()) {
@@ -257,6 +290,8 @@ func (a *app) onMain(fn func()) {
 }
 
 func (a *app) enabledTool(name string) bool { return a.cfg.enabledTool(name) }
+
+func (a *app) experimentalOn(key string) bool { return a.cfg.experimentalOn(key) }
 
 // currentPreset resolves the session's (or default) preset.
 func (a *app) currentPreset() *Preset {
@@ -478,7 +513,7 @@ func (a *app) loadSession(id string) {
 	a.errText = ""
 	a.status = ""
 	a.input = ""
-	a.ag = nil
+	a.dropAgent()
 	a.cancel = nil
 	a.pending = nil
 	a.traj = ses.Events()
@@ -912,7 +947,7 @@ func (a *app) modeChanged() {
 	}
 	a.cfg.Mode = a.ses.Meta.Mode
 	_ = saveConfig(a.cfg, a.cfgPath)
-	a.ag = nil
+	a.dropAgent()
 	a.refreshSessions()
 }
 
@@ -1053,43 +1088,269 @@ func (a *app) pluginOn(name string) *bool {
 	return &v
 }
 
+// ---- plugins view（REQ-004 三段式：内置清单卡 / 实验插件 / 已安装包）----
+
+type renderFn func(c *ui.Context)
+
 func (a *app) pluginsView(c *ui.Context) {
 	t := c.Theme()
-	toolDesc := map[string]string{}
-	for _, tl := range tools.All() {
-		toolDesc[tl.Name] = tl.Description
+	var rows []renderFn
+
+	// 段 1：内置插件清单卡（可搜索 + 展开详情）
+	var builtin []Plugin
+	q := strings.ToLower(strings.TrimSpace(a.pluginQuery))
+	for _, p := range builtinPlugins() {
+		if q == "" || strings.Contains(strings.ToLower(p.Name+p.ID+p.Description), q) {
+			builtin = append(builtin, p)
+		}
 	}
-	toolDesc["todo"] = "任务清单：维护本会话的 plan checklist"
-	toolDesc["task"] = "子代理：把自包含的子任务委托给一个子 agent"
-	toolDesc["run_code"] = "PTC：模型写一段脚本，把多次工具操作合并成一次执行"
-	allNames := []string{"bash", "read_file", "write_file", "edit_file", "glob", "grep", "web_fetch", "web_search", "todo", "task", "run_code"}
+	rows = append(rows, a.sectionHeader(fmt.Sprintf("内置插件 · %d", len(builtin))))
+	rows = append(rows, func(c *ui.Context) {
+		ui.Row(c).Gap(10).AlignItems(ui.Center).Padding(8, 16).Children(func() {
+			ui.TextInput(c, &a.pluginQuery).Placeholder("搜索插件…")
+		})
+	})
+	for _, p := range builtin {
+		plugin := p
+		rows = append(rows, func(c *ui.Context) { a.builtinPluginCard(c, plugin) })
+	}
+
+	// 段 2：实验插件（REQ-004 FR-2）
+	rows = append(rows, a.sectionHeader("实验插件"))
+	rows = append(rows, func(c *ui.Context) {
+		a.experimentalCard(c, "持久终端",
+			"Keep shell processes alive across tool calls——所有含 bash 的模式都用持久 shell（原版同名实验插件）",
+			"persistent_terminals")
+	})
+
+	// 段 3：已安装插件包
+	rows = append(rows, a.sectionHeader(fmt.Sprintf("已安装插件 · %d", len(a.pkgCache))))
+	rows = append(rows, a.installRow)
+	for _, pkg := range a.pkgCache {
+		p := pkg
+		rows = append(rows, func(c *ui.Context) { a.packageCard(c, p) })
+	}
+	rows = append(rows, a.pluginsFooter)
 
 	ui.Column(c).Fill().Children(func() {
 		ui.Row(c).Gap(10).AlignItems(ui.Center).Padding(10, 16).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
 			ui.Text(c, "插件 · 一切皆插件").Bold()
 			ui.Spacer(c)
 		})
-		ui.List(c, &a.pluginList, len(allNames)+1, func(i int) {
-			if i == len(allNames) {
-				ui.Column(c).Gap(4).Padding(14).Children(func() {
-					ui.Text(c, "与初代一样，模型、工具、技能、会话、沙箱都是配置项；").TextColor(t.TextMuted).FontSize(12)
-					ui.Text(c, "上面的开关决定模式挂载哪些内置插件。社区插件生态见 dsh-plugin 主题。").TextColor(t.TextMuted).FontSize(12)
-				})
-				return
-			}
-			name := allNames[i]
-			ui.Row(c).Gap(10).AlignItems(ui.Center).Padding(10, 16).Children(func() {
-				ui.Column(c).Grow(1).Gap(2).Children(func() {
-					ui.Text(c, name).Bold().FontSize(13)
-					ui.Text(c, ellipsis(toolDesc[name], 100)).TextColor(t.TextMuted).FontSize(11)
-				})
-				ui.Switch(c, a.pluginOn(name))
-				if *a.pluginOn(name) != a.enabledTool(name) {
-					a.setEnabled(name, *a.pluginOn(name))
-				}
-			})
+		ui.List(c, &a.pluginList, len(rows), func(i int) {
+			rows[i](c)
 		}).Grow(1).Padding(8, 8)
 	})
+}
+
+func (a *app) sectionHeader(text string) renderFn {
+	return func(c *ui.Context) {
+		t := c.Theme()
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Padding(12, 16).Children(func() {
+			ui.Text(c, text).Bold().FontSize(12).TextColor(t.TextMuted)
+		})
+	}
+}
+
+func (a *app) pluginsFooter(c *ui.Context) {
+	t := c.Theme()
+	ui.Column(c).Gap(4).Padding(14).Children(func() {
+		ui.Text(c, "与初代一样，模型、工具、技能、会话、沙箱都是配置项；开关决定模式挂载哪些内置插件。").TextColor(t.TextMuted).FontSize(12)
+		ui.Text(c, "创造模式的模型也能用 plugins 工具列出与管理插件；本地包放 <数据目录>/plugins/<id>/，或用上方输入框安装。").TextColor(t.TextMuted).FontSize(12)
+	})
+}
+
+// badge renders the Enabled/Disabled pill used by the plugin list cards.
+func pluginBadge(c *ui.Context, on bool) {
+	t := c.Theme()
+	text, color := "Enabled", t.Success
+	if !on {
+		text, color = "Disabled", t.TextMuted
+	}
+	ui.Text(c, text).FontSize(10).Padding(1, 7).Radius(8).Background(t.Background).TextColor(color)
+}
+
+// builtinPluginCard is one built-in plugin list card: name + state badge,
+// description, expandable detail with version/source/tools and the switch.
+func (a *app) builtinPluginCard(c *ui.Context, p Plugin) {
+	t := c.Theme()
+	open := a.boolRef(a.pluginOpen, p.ID)
+	on := a.enabledTool(p.ID)
+	ui.Column(c).Grow(1).Gap(0).Padding(2, 8).Children(func() {
+		row := ui.Row(c).Gap(10).AlignItems(ui.Center).Padding(10, 12).Radius(10).BorderWidth(1).BorderColor(t.Border)
+		row.Children(func() {
+			ui.Column(c).Grow(1).Gap(2).Children(func() {
+				ui.Text(c, p.Name).Bold().FontSize(13)
+				ui.Text(c, ellipsis(p.Description, 100)).TextColor(t.TextMuted).FontSize(11)
+			})
+			pluginBadge(c, on)
+			if *open {
+				ui.Text(c, "▾").TextColor(t.TextMuted)
+			} else {
+				ui.Text(c, "▸").TextColor(t.TextMuted)
+			}
+		})
+		if row.Clicked() {
+			*open = !*open
+		}
+		if *open {
+			ui.Column(c).Gap(4).Padding(10, 14).Children(func() {
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "v"+p.Version).FontSize(10).Padding(1, 6).Radius(6).Background(t.Background).TextColor(t.TextMuted)
+					ui.Text(c, p.Source).FontSize(10).Padding(1, 6).Radius(6).Background(t.Background).TextColor(t.TextMuted)
+					ui.Text(c, p.Category).FontSize(10).Padding(1, 6).Radius(6).Background(t.Background).TextColor(t.TextMuted)
+					ui.Text(c, p.ID).FontSize(10).Padding(1, 6).Radius(6).Background(t.Background).TextColor(t.TextMuted)
+				})
+				ui.Text(c, "挂载工具："+strings.Join(p.Tools, ", ")).TextColor(t.TextMuted).FontSize(11)
+				sw := a.enabledTool(p.ID)
+				ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "启用").FontSize(12)
+					ui.Switch(c, &sw)
+				})
+				if sw != a.enabledTool(p.ID) {
+					a.setEnabled(p.ID, sw)
+				}
+			})
+		}
+	})
+}
+
+// experimentalCard is one experimental-plugin toggle card (original style:
+// title + description + Enable switch).
+func (a *app) experimentalCard(c *ui.Context, name, desc, key string) {
+	t := c.Theme()
+	on := a.experimentalOn(key)
+	ui.Row(c).Gap(10).AlignItems(ui.Center).Padding(10, 12).Radius(10).BorderWidth(1).BorderColor(t.Border).Children(func() {
+		ui.Column(c).Grow(1).Gap(2).Children(func() {
+			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, name).Bold().FontSize(13)
+				ui.Text(c, "Experimental").FontSize(10).Padding(1, 6).Radius(6).Background(t.Background).TextColor(t.TextMuted)
+			})
+			ui.Text(c, ellipsis(desc, 120)).TextColor(t.TextMuted).FontSize(11)
+		})
+		ui.Switch(c, &on)
+	})
+	if on != a.experimentalOn(key) {
+		a.setExperimental(key, on)
+	}
+}
+
+// installRow is the Add-plugin entry of the installed section.
+func (a *app) installRow(c *ui.Context) {
+	t := c.Theme()
+	ui.Row(c).Gap(10).AlignItems(ui.Center).Padding(8, 12).Children(func() {
+		ui.TextInput(c, &a.installInput).Placeholder("本地插件目录路径，或以 .git / git@ 开头的 git URL…").Grow(1)
+		if ui.Button(c, "安装插件").Clicked() {
+			a.installPackage()
+		}
+		ui.Text(c, "").FontSize(1).TextColor(t.TextMuted)
+	})
+}
+
+// packageCard is one installed package: name/version/source + state, with
+// expandable per-tool (child plugin) switches and a two-step uninstall.
+func (a *app) packageCard(c *ui.Context, p PluginPackage) {
+	t := c.Theme()
+	open := a.boolRef(a.pkgOpen, p.ID)
+	ui.Column(c).Grow(1).Gap(0).Padding(2, 8).Children(func() {
+		row := ui.Row(c).Gap(10).AlignItems(ui.Center).Padding(10, 12).Radius(10).BorderWidth(1).BorderColor(t.Border)
+		row.Children(func() {
+			ui.Column(c).Grow(1).Gap(2).Children(func() {
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, p.Name).Bold().FontSize(13)
+					ui.Text(c, "v"+p.Version).FontSize(10).Padding(1, 6).Radius(6).Background(t.Background).TextColor(t.TextMuted)
+					ui.Text(c, p.Source).FontSize(10).Padding(1, 6).Radius(6).Background(t.Background).TextColor(t.TextMuted)
+					ui.Text(c, a.cfg.packageState(p)).FontSize(10).TextColor(t.TextMuted)
+				})
+				if p.Description != "" {
+					ui.Text(c, ellipsis(p.Description, 100)).TextColor(t.TextMuted).FontSize(11)
+				}
+			})
+			if *open {
+				ui.Text(c, "▾").TextColor(t.TextMuted)
+			} else {
+				ui.Text(c, "▸").TextColor(t.TextMuted)
+			}
+		})
+		if row.Clicked() {
+			*open = !*open
+		}
+		if *open {
+			ui.Column(c).Gap(6).Padding(10, 14).Children(func() {
+				if p.Origin != "" {
+					ui.Text(c, "来源："+p.Origin).TextColor(t.TextMuted).FontSize(10)
+				}
+				for _, tl := range p.Tools {
+					tool := tl
+					on := a.cfg.packageChildOn(p.ID, tool.Name)
+					ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+						ui.Column(c).Grow(1).Gap(1).Children(func() {
+							ui.Text(c, tool.Name).FontSize(12)
+							ui.Text(c, ellipsis(tool.Description, 90)).TextColor(t.TextMuted).FontSize(10)
+						})
+						ui.Switch(c, &on)
+					})
+					if on != a.cfg.packageChildOn(p.ID, tool.Name) {
+						a.setEnabled(p.ID+"/"+tool.Name, on)
+					}
+				}
+				label := "卸载"
+				if a.confirmUninstall == p.ID {
+					label = "再次点击确认卸载"
+				}
+				if ui.Button(c, label).Clicked() {
+					a.uninstallPackageUI(p)
+				}
+			})
+		}
+	})
+}
+
+// installPackage installs from the composer input: an existing directory is
+// imported locally; a git-looking URL is cloned (REQ-004 FR-6).
+func (a *app) installPackage() {
+	src := strings.TrimSpace(a.installInput)
+	a.installInput = ""
+	a.errText = ""
+	if src == "" {
+		a.errText = "请输入本地插件目录路径或 git URL"
+		return
+	}
+	var (
+		p   PluginPackage
+		err error
+	)
+	if st, serr := os.Stat(src); serr == nil && st.IsDir() {
+		p, err = installFromPath(a.dataDir, src)
+	} else if strings.HasPrefix(src, "git@") || strings.HasSuffix(src, ".git") ||
+		strings.HasPrefix(src, "https://") || strings.HasPrefix(src, "http://") {
+		p, err = installFromGit(a.dataDir, src)
+	} else {
+		err = fmt.Errorf("目录不存在，也无法识别为 git URL（git 地址请以 .git 结尾或 git@ 开头）")
+	}
+	if err != nil {
+		a.errText = "安装失败：" + err.Error()
+		return
+	}
+	a.refreshPackages()
+	a.dropAgent()
+	a.note(fmt.Sprintf("插件包已安装：%s v%s（%d 个工具，从下一条消息开始可用）", p.Name, p.Version, len(p.Tools)))
+}
+
+// uninstallPackageUI runs the two-step uninstall (REQ-004 FR-7).
+func (a *app) uninstallPackageUI(p PluginPackage) {
+	if a.confirmUninstall != p.ID {
+		a.confirmUninstall = p.ID
+		return
+	}
+	a.confirmUninstall = ""
+	if err := uninstallPackage(a.dataDir, p.ID); err != nil {
+		a.errText = "卸载失败：" + err.Error()
+		return
+	}
+	a.refreshPackages()
+	a.dropAgent()
+	a.note("插件包已卸载：" + p.Name)
 }
 
 func (a *app) setEnabled(name string, on bool) {
@@ -1098,6 +1359,58 @@ func (a *app) setEnabled(name string, on bool) {
 	}
 	a.cfg.EnabledTools[name] = on
 	_ = saveConfig(a.cfg, a.cfgPath)
+}
+
+// pluginControl backs the agent's plugins tool (REQ-002): the model can
+// list, inspect, enable and disable plugins. Changes persist via
+// setEnabled and take effect from the next user message.
+func (a *app) pluginControl(action, id string) (string, bool) {
+	all := builtinPlugins()
+	switch action {
+	case "list":
+		var b strings.Builder
+		fmt.Fprintf(&b, "共 %d 个内置插件：", len(all))
+		for _, g := range pluginGroups(all) {
+			fmt.Fprintf(&b, "\n\n[%s]", g.Category)
+			for _, p := range g.Plugins {
+				state := "关"
+				if a.enabledTool(p.ID) {
+					state = "开"
+				}
+				fmt.Fprintf(&b, "\n- %s（%s）%s — %s", p.ID, state, p.Name, p.Description)
+			}
+		}
+		return b.String(), false
+	case "info":
+		p, ok := pluginByID(all, id)
+		if !ok {
+			return "error: 未知插件 " + id + "；用 action=list 查看全部", true
+		}
+		state := "已停用"
+		if a.enabledTool(p.ID) {
+			state = "已启用"
+		}
+		return fmt.Sprintf("id=%s\n名称=%s\n版本=v%s\n分类=%s\n来源=%s\n挂载工具=%s\n状态=%s\n描述=%s",
+			p.ID, p.Name, p.Version, p.Category, p.Source, strings.Join(p.Tools, ","), state, p.Description), false
+	case "enable", "disable":
+		p, ok := pluginByID(all, id)
+		if !ok {
+			return "error: 未知插件 " + id + "；用 action=list 查看全部", true
+		}
+		on := action == "enable"
+		a.setEnabled(p.ID, on)
+		verb := "已启用"
+		if !on {
+			verb = "已停用"
+		}
+		tail := ""
+		if p.Kind == "control" && !on {
+			tail = "（注意：这会移除你自己的 plugins 工具，用户仍可在插件页恢复）"
+		}
+		return fmt.Sprintf("插件 %s（%s）%s，从下一条用户消息开始生效。%s", p.ID, p.Name, verb, tail), false
+	default:
+		return "error: 未知 action " + action + "（可选 list / info / enable / disable）", true
+	}
 }
 
 // ---- settings view ----
@@ -1177,6 +1490,7 @@ var settingsSections = []struct {
 	{icoGear, "通用设置"},
 	{icoBot, "模型"},
 	{icoPlugin, "内置插件"},
+	{icoWrench, "技能"},
 	{icoList, "Agent 预设"},
 	{icoArc, "已归档会话"},
 	{icoGlobe, "Web 插件"},
@@ -1234,6 +1548,8 @@ func (a *app) settingsBody(c *ui.Context) {
 						a.secModel(c)
 					case "内置插件":
 						a.secPlugins(c)
+					case "技能":
+						a.secSkills(c)
 					case "Agent 预设":
 						a.secPresets(c)
 					case "已归档会话":
@@ -1420,36 +1736,55 @@ func (a *app) secModel(c *ui.Context) {
 	})
 }
 
-// ---- 内置插件 ----
-
-var toolDescExtra = map[string]string{
-	"todo":     "任务清单：维护本会话的 plan checklist",
-	"task":     "子代理：把自包含的子任务委托给一个子 agent",
-	"run_code": "PTC：模型写一段脚本，把多次工具操作合并成一次执行",
-}
+// ---- 内置插件（设置分区，与插件页同一清单卡渲染）----
 
 func (a *app) secPlugins(c *ui.Context) {
 	t := c.Theme()
-	names := []string{"bash", "read_file", "write_file", "edit_file", "glob", "grep", "web_fetch", "web_search", "todo", "task", "run_code"}
-	desc := map[string]string{}
-	for _, tl := range tools.All() {
-		desc[tl.Name] = tl.Description
+	q := strings.ToLower(strings.TrimSpace(a.setPluginQuery))
+	var list []Plugin
+	for _, p := range builtinPlugins() {
+		if q == "" || strings.Contains(strings.ToLower(p.Name+p.ID+p.Description), q) {
+			list = append(list, p)
+		}
 	}
-	for k, v := range toolDescExtra {
-		desc[k] = v
+	ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+		ui.TextInput(c, &a.setPluginQuery).Placeholder("搜索插件…").Grow(1)
+		ui.Text(c, fmt.Sprintf("%d 个内置插件", len(list))).FontSize(11).TextColor(t.TextMuted)
+	})
+	for _, p := range list {
+		plugin := p
+		a.builtinPluginCard(c, plugin)
 	}
-	for _, name := range names {
-		ui.Row(c).Gap(10).AlignItems(ui.Center).Padding(10, 12).Radius(8).Children(func() {
-			ui.Column(c).Grow(1).Gap(2).Children(func() {
-				ui.Text(c, name).Bold().FontSize(13)
-				ui.Text(c, ellipsis(desc[name], 100)).TextColor(t.TextMuted).FontSize(11)
+}
+
+// ---- 技能 ----
+
+func (a *app) secSkills(c *ui.Context) {
+	t := c.Theme()
+	settingsCard(c, "已发现的技能", func() {
+		skills := a.currentSkills()
+		if len(skills) == 0 {
+			ui.Column(c).Gap(4).Padding(10, 12).Children(func() {
+				ui.Text(c, "未发现技能").Bold().FontSize(13)
+				ui.Text(c, "把技能放到 <数据目录>/skills/<名称>/SKILL.md 或 <工作区>/.harness/skills/<名称>/SKILL.md："+"frontmatter 写 name / description，正文是给模型的指令（标准/创造模式可经 skill 工具加载）。").TextColor(t.TextMuted).FontSize(12)
 			})
-			ui.Switch(c, a.pluginOn(name))
-			if *a.pluginOn(name) != a.enabledTool(name) {
-				a.setEnabled(name, *a.pluginOn(name))
-			}
-		})
-	}
+			return
+		}
+		for _, s := range skills {
+			ui.Row(c).Gap(10).AlignItems(ui.Center).Padding(10, 12).Radius(8).Children(func() {
+				ui.Column(c).Grow(1).Gap(2).Children(func() {
+					ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, s.Name).Bold().FontSize(13)
+						ui.Text(c, s.Source).FontSize(10).Padding(1, 6).Radius(6).Background(t.Background).TextColor(t.TextMuted)
+					})
+					if s.Description != "" {
+						ui.Text(c, ellipsis(s.Description, 100)).TextColor(t.TextMuted).FontSize(11)
+					}
+					ui.Text(c, s.Path).TextColor(t.TextMuted).FontSize(10)
+				})
+			})
+		}
+	})
 }
 
 // ---- Agent 预设 ----
@@ -1486,7 +1821,7 @@ func (a *app) secPresets(c *ui.Context) {
 						a.ses.Touch()
 						a.refreshSessions()
 					}
-					a.ag = nil
+					a.dropAgent()
 				}
 			}
 		}
@@ -1905,6 +2240,51 @@ func (a *app) send() {
 	go a.ag.Run(ctx, text, cbs)
 }
 
+// dropAgent discards the session agent, releasing its persistent shell.
+func (a *app) dropAgent() {
+	if a.ag != nil {
+		if a.ag.Shell != nil {
+			a.ag.Shell.Close()
+		}
+		a.ag = nil
+	}
+}
+
+// currentSkills resolves the skill list for the active session's workspace.
+func (a *app) currentSkills() []Skill {
+	ws := a.cfg.WorkDir
+	if a.ses != nil && a.ses.Meta.Workspace != "" {
+		ws = a.ses.Meta.Workspace
+	}
+	return discoverSkills(a.dataDir, ws)
+}
+
+// skillControl backs the agent's skill tool (REQ-003): list the discovered
+// SKILL.md packs or run one to load its instructions.
+func (a *app) skillControl(action, name string) (string, bool) {
+	skills := a.currentSkills()
+	switch action {
+	case "list":
+		if len(skills) == 0 {
+			return "(没有已安装的技能；把技能放到 <数据目录>/skills/<名称>/SKILL.md 或 <工作区>/.harness/skills/<名称>/SKILL.md)", false
+		}
+		var b strings.Builder
+		for _, s := range skills {
+			fmt.Fprintf(&b, "- %s（%s）— %s\n", s.Name, s.Source, s.Description)
+		}
+		return strings.TrimRight(b.String(), "\n"), false
+	case "run":
+		for _, s := range skills {
+			if s.Name == name || s.ID == name {
+				return "【技能：" + s.Name + "（" + s.Source + "）】请严格按以下指令执行：\n\n" + s.Body, false
+			}
+		}
+		return "error: 未知技能 " + name + "；用 action=list 查看全部", true
+	default:
+		return "error: 未知 action " + action + "（可选 list / run）", true
+	}
+}
+
 func (a *app) newAgentFor(ses *Session) *agent.Agent {
 	preset := presetByID(a.presets, ses.Meta.Mode)
 	var names []string
@@ -1929,6 +2309,76 @@ func (a *app) newAgentFor(ses *Session) *agent.Agent {
 		WorkDir:      ses.Meta.Workspace,
 		Specs:        specs,
 	}
+	// 持久 shell：极简（或自定义）preset 自带，或实验开关「持久终端」全局开启
+	hasBash := false
+	for _, n := range preset.Tools {
+		if n == "bash" {
+			hasBash = true
+		}
+	}
+	if hasBash && a.enabledTool("bash") && (preset.PersistentShell || a.experimentalOn("persistent_terminals")) {
+		base.Shell = tools.NewPersistentShell(ses.Meta.Workspace)
+	}
+	// 已安装插件包：spec + 运行器 + 审批标记（REQ-004）
+	var pkgSpecs []llm.ToolSpec
+	runners := map[string]func(ctx context.Context, argsJSON string) (string, bool){}
+	mutating := map[string]bool{}
+	workdir := ses.Meta.Workspace
+	shell := base.Shell
+	for _, pkg := range a.pkgCache {
+		for _, tl := range pkg.Tools {
+			if !a.cfg.packageChildOn(pkg.ID, tl.Name) {
+				continue
+			}
+			tool := tl
+			scriptPath := filepath.Join(pluginsRoot(a.dataDir), pkg.ID, tool.Script)
+			runners[tool.Name] = func(ctx context.Context, argsJSON string) (string, bool) {
+				b, rerr := os.ReadFile(scriptPath) //nolint:gosec
+				if rerr != nil {
+					return "error: 读取插件脚本失败: " + rerr.Error(), true
+				}
+				return agent.RunPackageTool(ctx, string(b), argsJSON, workdir, func(nm, aj string) (string, bool) {
+					if nm == "bash" && shell != nil {
+						return shell.Run(ctx, aj)
+					}
+					bt := tools.ByName(nm)
+					if bt == nil {
+						return "error: unknown tool " + nm, true
+					}
+					return bt.Run(ctx, aj, workdir)
+				})
+			}
+			mutating[tool.Name] = tool.Mutating
+			pkgSpecs = append(pkgSpecs, llm.ToolSpec{
+				Type: "function",
+				Function: llm.ToolDef{
+					Name: tool.Name,
+					Description: fmt.Sprintf("[插件包 %s v%s] %s",
+						pkg.Name, pkg.Version, tool.Description),
+					Parameters: map[string]any{"type": "object"},
+				},
+			})
+		}
+	}
+	if len(pkgSpecs) > 0 {
+		base.PackageSpecs = pkgSpecs
+		base.PackageTools = runners
+		base.MutatingTools = mutating
+	}
+	if preset.PersistentShell {
+		base.Shell = tools.NewPersistentShell(ses.Meta.Workspace)
+	}
+	if preset.CanManagePlugins && a.enabledTool("plugins") {
+		base.PluginTool = a.pluginControl
+	}
+	for _, n := range preset.Tools {
+		if n == "skill" && a.enabledTool("skill") {
+			base.SkillTool = a.skillControl
+		}
+	}
+	// Every agent asks back which plugins are on, so toggles made in the
+	// plugins page (or by the model itself) apply from the next message.
+	base.PluginEnabled = a.enabledTool
 	if h := ses.LoadHistory(); len(h) > 0 {
 		base.History = h
 	}
@@ -1981,7 +2431,7 @@ func (a *app) command(text string) {
 		a.ses.Meta.Workspace = parts[1]
 		a.ses.Touch()
 		a.refreshSessions()
-		a.ag = nil
+		a.dropAgent()
 		a.note("工作区已切换：" + parts[1])
 	default:
 		a.errText = "未知命令 " + parts[0] + "，/help 查看帮助"
@@ -2006,7 +2456,7 @@ func (a *app) switchMode(label string) {
 	p := labelToPreset(a.presets, label)
 	a.ses.Meta.Mode = p.ID
 	a.ses.Touch()
-	a.ag = nil
+	a.dropAgent()
 	a.cfg.Mode = p.ID
 	_ = saveConfig(a.cfg, a.cfgPath)
 	a.refreshSessions()

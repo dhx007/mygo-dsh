@@ -8,13 +8,14 @@
 |---|---|
 | 左侧会话列表，按工作区（本地项目目录）组织 | ✅ 品牌区 + 新会话大按钮 + 插件/设置导航 + 工作区分组（含搜索），底部状态/用户行 |
 | 对话区时间线：每一步工具调用摊开 | ✅ 顶栏标题+模式+对话/轨迹标签页（橙色下划线），工具行内折叠，Markdown 流式渲染 |
-| 四种模式：标准 / PTC / 极简 / 创造 | ✅ 标准=全套工具；PTC=goja 跑脚本合并工具调用；极简=bash+编辑器；创造=可读写 presets.json 造新模式 |
+| 四种模式：标准 / PTC / 极简 / 创造 | ✅ 标准=全套工具；PTC=goja 跑脚本合并工具调用；极简=持久 bash（env/cwd 跨调用保留）+编辑器；创造=可读写 presets.json 造新模式 |
 | Trajectory 轨迹（只增不改的会话日志） | ✅ 每会话 events.jsonl，轨迹页按来源逐条检查（原文 JSON 折叠） |
 | 会话恢复 / 分叉 / 搜索 | ✅ history.json 续聊；一键分叉；侧栏全文搜索 |
 | 工具权限审批（允许一次 / 总是允许 / 拒绝） | ✅ 变更类工具（bash/写/编辑/PTC）先审批，可「总是允许」，设置里可全自动 |
 | `/compact` 自动历史压缩 | ✅ `/compact` 用模型生成摘要替换历史，轨迹留痕 |
 | 子代理 / 规划 | ✅ `task` 工具（一层深子代理）；`todo` 工具渲染成任务清单卡片 |
-| 一切皆插件 | ✅ 插件页：11 个内置工具逐一开关，写入配置 |
+| 一切皆插件 | ✅ 插件页三段式对齐原版：内置插件清单卡（搜索 + 展开详情）· 实验插件开关（持久终端）· 已装插件包（plugin.json 包模型 + 子插件开关 + 本地/git 安装 + 卸载）；模型可用 `plugins` 工具管理（创造模式）；包工具在 goja 沙箱执行（复用 PTC 桥，30s 超时） |
+| 技能（skills） | ✅ 双目录 SKILL.md 发现（数据目录 `skills/` 与工作区 `.harness/skills/`，工作区覆盖全局），模型 `skill` 工具 list/run 按需加载指令，设置·技能分区展示 |
 | 设置 → 模型（DeepSeek，DEEPSEEK_API_KEY） | ✅ 模态设置子窗口（打开期间主窗口锁定）：账号与余额（/user/balance 真实查询）/ 通用设置 / 模型 / 内置插件 / Agent 预设 / 已归档会话 / Web 插件 / 皮肤（暖黑·深海·森绿）/ 宠物 / 创意工坊 / 使用统计；入口在左下角用户菜单 |
 
 斜杠命令：`/help` `/new` `/fork` `/compact` `/mode <标准|PTC|极简|创造|…>` `/cwd <目录>` `/trajectory`
@@ -41,13 +42,21 @@ main.go            入口：窗口（1200×780，记忆位置）
 theme.go           DSH 暗色设计令牌 → MyGo Theme
 store.go           会话仓库：meta / events.jsonl（轨迹）/ history.json，分叉与搜索
 presets.go         四种模式 + 自定义预设（presets.json）
+plugins.go         插件注册表：13 个内置插件（分类/版本/来源），插件页·设置·模型工具同源
+packages.go        本地插件包：plugin.json 包模型、本地/git 安装、子插件开关、卸载
+skills.go          技能：双目录 SKILL.md 发现与解析（全局 + 工作区）
 config.go          配置（Key/模型/工作区/插件开关/自动审批）
 app.go             全部 UI：侧栏、时间线、审批卡、轨迹页、插件页、设置页、/命令
 app_test.go        ui.Tester 无头 UI 流程测试
 internal/llm/      DeepSeek SSE 客户端（流式 + tool_calls 增量组装）
 internal/agent/    Agent 循环：审批门、todo、task 子代理、PTC 执行器
-internal/tools/    bash / read_file / write_file / edit_file / glob / grep / web_fetch / web_search
+internal/tools/    bash / 持久 shell / read_file / write_file / edit_file / glob / grep / web_fetch / web_search
 ```
+
+## 文档
+
+功能复刻的需求、设计与测试留痕在 `docs/`：流程见 `docs/PROCESS.md`，功能总台账见
+`docs/inventory/FEATURE-MATRIX.md`，已交付特性见 `docs/requirements|design|testing/`。
 
 ## 测试
 
@@ -59,8 +68,7 @@ go test ./...
 
 ## 与初代的已知差距
 
-- 极简模式的「持久 bash」（跨命令保留 env/cwd）未做，每次调用是独立 shell
-- 技能（skills）、工作流编排、终端面板未包含
+- 工作流编排、终端面板未包含（进度台账见 `docs/inventory/FEATURE-MATRIX.md`；技能已复刻）
 - PTC 是 goja（纯 Go JS 解释器）而非 Node SDK，超时 120s
 - 自定义模式经 UI 创建；改名/删除直接编辑 presets.json
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -177,5 +178,239 @@ func TestSidebarReloadSession(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join(a.store.Root, "s", id, "meta.json"))
 	if err != nil || !strings.Contains(string(b), id) {
 		t.Errorf("meta.json missing: %v", err)
+	}
+}
+
+// REQ-001 AC-5: 极简 mounts the persistent shell, 标准 keeps one-shot bash.
+func TestPersistentShellPresetWiring(t *testing.T) {
+	a := newTestApp(t)
+
+	ses, err := a.store.New(a.cfg.WorkDir, "极简", "minimal-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ag := a.newAgentFor(ses)
+	if ag.Shell == nil {
+		t.Fatal("极简 preset did not mount a persistent shell")
+	}
+	ag.Shell.Close()
+
+	ses2, err := a.store.New(a.cfg.WorkDir, "标准", "standard-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ag2 := a.newAgentFor(ses2); ag2.Shell != nil {
+		t.Fatal("标准 preset should keep the one-shot bash")
+	}
+}
+
+// REQ-003 AC-4: the settings 技能 section lists discovered skills with
+// source badges; the empty state guides where to drop SKILL.md packs.
+func TestSettingsSkillsSection(t *testing.T) {
+	a := newTestApp(t)
+	g, _ := skillRoots(a.dataDir, a.cfg.WorkDir)
+	writeSkill(t, g, "deploy", "description: 发布流程", "步骤一")
+	a.setSection = "技能"
+	tt := ui.NewTester(a.settingsWindowView, 960, 700)
+	tt.Frame()
+	for _, want := range []string{"已发现的技能", "deploy", "发布流程", "全局"} {
+		if !tt.HasText(want) {
+			t.Errorf("技能 section missing %q (texts=%v)", want, tt.Texts())
+		}
+	}
+
+	a2 := newTestApp(t)
+	a2.setSection = "技能"
+	tt2 := ui.NewTester(a2.settingsWindowView, 960, 700)
+	tt2.Frame()
+	if !tt2.HasText("未发现技能") {
+		t.Errorf("empty state missing (texts=%v)", tt2.Texts())
+	}
+}
+
+// REQ-001 AC-6: dropping the agent releases the shell process; Close is idempotent.
+func TestDropAgentClosesShell(t *testing.T) {
+	a := newTestApp(t)
+	ses, err := a.store.New(a.cfg.WorkDir, "极简", "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.ag = a.newAgentFor(ses)
+	sh := a.ag.Shell
+	if out, failed := sh.Run(context.Background(), `{"command":"echo hi"}`); failed {
+		t.Fatalf("shell did not start: %s", out)
+	}
+	if !sh.Running() {
+		t.Fatal("shell not running after first call")
+	}
+	a.dropAgent()
+	if sh.Running() {
+		t.Fatal("shell still running after dropAgent")
+	}
+	sh.Close() // must not panic
+}
+
+// REQ-004 AC-1: the plugins page shows the three sections; search filters
+// the built-in list; cards expand to their detail with the switch.
+func TestPluginsPageSections(t *testing.T) {
+	a := newTestApp(t)
+	tt := ui.NewTester(a.view, 1200, 780)
+	tt.Frame()
+
+	a.selectedID = "page:plugins"
+	tt.Frame()
+	if !tt.HasText("内置插件 · 13") || !tt.HasText("Shell 终端") {
+		t.Errorf("builtin section missing (texts=%v)", tt.Texts())
+	}
+
+	// 搜索过滤到 1 项 → 其余分区块上移进入视口
+	a.pluginQuery = "读文件"
+	tt.Frame()
+	if !tt.HasText("内置插件 · 1") || !tt.HasText("实验插件") || !tt.HasText("持久终端") || !tt.HasText("已安装插件 · 0") {
+		t.Errorf("filtered sections missing (texts=%v)", tt.Texts())
+	}
+
+	// 展开详情
+	if err := tt.Click("读文件"); err != nil {
+		t.Fatalf("expand card: %v (texts=%v)", err, tt.Texts())
+	}
+	tt.Frame()
+	if !tt.HasText("挂载工具：read_file") || !tt.HasText("v0.1.0") {
+		t.Errorf("expanded detail missing (texts=%v)", tt.Texts())
+	}
+}
+
+// REQ-004 AC-3/FR-3: an installed package renders as a card with child
+// tools and uninstall; installPackage copies the source dir.
+func TestPluginsPageInstalledPackage(t *testing.T) {
+	a := newTestApp(t)
+	a.selectedID = "page:plugins"
+	tt := ui.NewTester(a.view, 1200, 780)
+	tt.Frame()
+
+	src := t.TempDir()
+	writePluginSource(t, src, "demo-pack")
+	a.installInput = src
+	a.installPackage()
+	if a.errText != "" {
+		t.Fatalf("install failed: %s", a.errText)
+	}
+	a.pluginQuery = "zzz" // 内置清单过滤为空，让已安装段进入视口
+	tt.Frame()
+	if !tt.HasText("已安装插件 · 1") || !tt.HasText("示例包") || !tt.HasText("v1.0.0") {
+		t.Errorf("package card missing (texts=%v)", tt.Texts())
+	}
+	if err := tt.Click("示例包"); err != nil {
+		t.Fatalf("expand package: %v (texts=%v)", err, tt.Texts())
+	}
+	tt.Frame()
+	if !tt.HasText("demo_hello") || !tt.HasText("卸载") {
+		t.Errorf("package detail missing (texts=%v)", tt.Texts())
+	}
+	// 两步卸载
+	if err := tt.Click("卸载"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if !tt.HasText("再次点击确认卸载") {
+		t.Errorf("uninstall confirm missing (texts=%v)", tt.Texts())
+	}
+	if err := tt.Click("再次点击确认卸载"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if len(a.pkgCache) != 0 {
+		t.Errorf("package still installed after uninstall: %+v", a.pkgCache)
+	}
+}
+
+// REQ-004 AC-2: the persistent terminals experimental switch mounts the
+// persistent shell for every bash preset; 极简 always has it.
+func TestPersistentTerminalsFlag(t *testing.T) {
+	a := newTestApp(t)
+	ses, err := a.store.New(a.cfg.WorkDir, "标准", "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ag := a.newAgentFor(ses); ag.Shell != nil {
+		t.Error("标准 preset should not mount a shell by default")
+	}
+	a.setExperimental("persistent_terminals", true)
+	if ag := a.newAgentFor(ses); ag.Shell == nil {
+		t.Error("flag on but 标准 preset has no persistent shell")
+	} else {
+		ag.Shell.Close()
+	}
+	a.setExperimental("persistent_terminals", false)
+
+	ses2, err := a.store.New(a.cfg.WorkDir, "极简", "s2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ag := a.newAgentFor(ses2); ag.Shell == nil {
+		t.Error("极简 preset must always mount the persistent shell")
+	} else {
+		ag.Shell.Close()
+	}
+}
+
+// REQ-004 AC-5: installed package tools mount into the agent's toolset and
+// respect package/child toggles.
+func TestPackageToolAgentWiring(t *testing.T) {
+	a := newTestApp(t)
+	src := t.TempDir()
+	writePluginSource(t, src, "demo-pack")
+	if _, err := installFromPath(a.dataDir, src); err != nil {
+		t.Fatal(err)
+	}
+	a.refreshPackages()
+
+	ses, err := a.store.New(a.cfg.WorkDir, "标准", "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ag := a.newAgentFor(ses)
+	if len(ag.PackageSpecs) != 1 || ag.PackageSpecs[0].Function.Name != "demo_hello" {
+		t.Fatalf("package spec missing: %+v", ag.PackageSpecs)
+	}
+	if ag.PackageTools["demo_hello"] == nil || ag.MutatingTools["demo_hello"] {
+		t.Fatalf("runner/mutating wiring wrong (demo_hello 是只读工具): %+v", ag.MutatingTools)
+	}
+	if !strings.Contains(ag.PackageSpecs[0].Function.Description, "示例包") {
+		t.Errorf("spec description should name the package: %q", ag.PackageSpecs[0].Function.Description)
+	}
+	// 子插件停用 → spec 消失
+	a.setEnabled("demo-pack/demo_hello", false)
+	if ag2 := a.newAgentFor(ses); len(ag2.PackageSpecs) != 0 {
+		t.Fatalf("child toggle not respected: %+v", ag2.PackageSpecs)
+	}
+	// 恢复子插件、停用整包 → spec 消失
+	a.setEnabled("demo-pack/demo_hello", true)
+	a.setEnabled("demo-pack", false)
+	if ag3 := a.newAgentFor(ses); len(ag3.PackageSpecs) != 0 {
+		t.Fatalf("package toggle not respected: %+v", ag3.PackageSpecs)
+	}
+}
+
+// REQ-001 AC-6: dropping the agent releases the shell process; Close is idempotent.
+
+// REQ-004 AC-1: the settings 内置插件 section renders the same card list
+// with its own search. Headless has no child window, so drive the
+// production settingsWindowView directly.
+func TestSettingsPluginsSectionGrouped(t *testing.T) {
+	a := newTestApp(t)
+	a.setSection = "内置插件"
+	tt := ui.NewTester(a.settingsWindowView, 960, 700)
+	tt.Frame()
+
+	for _, want := range []string{"13 个内置插件", "Shell 终端", "读文件", "Enabled"} {
+		if !tt.HasText(want) {
+			t.Errorf("settings 内置插件 missing %q (texts=%v)", want, tt.Texts())
+		}
+	}
+	a.setPluginQuery = "读文件"
+	tt.Frame()
+	if !tt.HasText("1 个内置插件") || tt.HasText("Shell 终端") {
+		t.Errorf("settings search filter broken (texts=%v)", tt.Texts())
 	}
 }

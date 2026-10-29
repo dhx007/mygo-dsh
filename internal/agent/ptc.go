@@ -38,6 +38,28 @@ func RunCodeSpec() llm.ToolSpec {
 
 var ptcToolNames = []string{"bash", "read_file", "write_file", "glob", "grep", "web_fetch", "web_search"}
 
+// ptcWrapJS defines the positional-friendly wrappers over the raw
+// JSON-schema bindings; shared by PTC mode and package tool scripts.
+var ptcWrapJS = `
+function bash(cmd) { return bash_raw({command: String(cmd)}); }
+function read_file(path, offset_line, limit) {
+  var a = {path: String(path)};
+  if (offset_line !== undefined && offset_line !== null) a.offset_line = offset_line;
+  if (limit !== undefined && limit !== null) a.limit = limit;
+  return read_file_raw(a);
+}
+function write_file(path, content) { return write_file_raw({path: String(path), content: String(content)}); }
+function glob(pattern, root) { var a = {pattern: String(pattern)}; if (root) a.path = String(root); return glob_raw(a); }
+function grep(pattern, path, include) {
+  var a = {pattern: String(pattern)};
+  if (path) a.path = String(path);
+  if (include) a.include = String(include);
+  return grep_raw(a);
+}
+function web_fetch(url) { return web_fetch_raw({url: String(url)}); }
+function web_search(query) { return web_search_raw({query: String(query)}); }
+`
+
 // runPTCCode executes the model's JavaScript in a fresh interpreter with
 // the tools bound as plain functions, PTC style: many tool operations in
 // one round trip. An explicit return (the code runs inside a function)
@@ -60,26 +82,7 @@ func runPTCCode(ctx context.Context, code, cwd string, call func(name, argsJSON 
 	}
 
 	// Positional-friendly wrappers over the raw JSON-schema bindings.
-	wrapJS := `
-function bash(cmd) { return bash_raw({command: String(cmd)}); }
-function read_file(path, offset_line, limit) {
-  var a = {path: String(path)};
-  if (offset_line !== undefined && offset_line !== null) a.offset_line = offset_line;
-  if (limit !== undefined && limit !== null) a.limit = limit;
-  return read_file_raw(a);
-}
-function write_file(path, content) { return write_file_raw({path: String(path), content: String(content)}); }
-function glob(pattern, root) { var a = {pattern: String(pattern)}; if (root) a.path = String(root); return glob_raw(a); }
-function grep(pattern, path, include) {
-  var a = {pattern: String(pattern)};
-  if (path) a.path = String(path);
-  if (include) a.include = String(include);
-  return grep_raw(a);
-}
-function web_fetch(url) { return web_fetch_raw({url: String(url)}); }
-function web_search(query) { return web_search_raw({query: String(query)}); }
-`
-	if _, err := vm.RunString(wrapJS); err != nil {
+	if _, err := vm.RunString(ptcWrapJS); err != nil {
 		return "error: 初始化 PTC 环境失败: " + err.Error(), true
 	}
 
