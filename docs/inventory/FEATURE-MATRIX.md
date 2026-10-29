@@ -31,7 +31,8 @@
 
 | DSH 包/功能 | 说明 | mygo 现状 | 状态 | 优先级 | 文档 |
 |---|---|---|---|---|---|
-| `dsh-agent-loop` / `dsh-agent` / `agent-instructions` | 工具调用循环 | ✅ `internal/agent`（流式 + tool_calls，30 轮上限） | ✅ | — | — |
+| `dsh-agent-loop` / `dsh-agent` | 工具调用循环 | ✅ `internal/agent`（流式 + tool_calls，30 轮上限） | ✅ | — | — |
+| `dsh-agent-instructions` | 工作区指令加载（AGENTS.md/CLAUDE.md 注入系统提示词） | ✅ `instructions.go`：AGENTS.md→CLAUDE.md 发现、32KB 截断、注册表门控（REQ-008） | ✅ | P1 | REQ-008 |
 | `dsh-agent-preset`(+registry) / `client-ui-agent-preset` | Agent 预设（多模式） | ✅ 标准/PTC/极简/创造 + 自定义；改名/删除缺 UI | 🟡 | P1 | — |
 | `dsh-agent-default-model` | 默认模型 | ✅ deepseek-chat | ✅ | — | — |
 | `dsh-persona` / `dsh-system-prompt` | 人设/系统提示词管理 | 固定模板 | 🟡 | P1 | — |
@@ -143,13 +144,12 @@
 
 | 状态 | 数量（截至 2026-10-30） |
 |---|---|
-| ✅ 已复刻 | 17 |
+| ✅ 已复刻 | 18 |
 | 🟡 部分复刻 | 23 |
-| ❌ 未复刻 | 27 |
+| ❌ 未复刻 | 26 |
 | ⚪ 不逐包复刻 | 14 |
 
-> 排期建议：~~P0 插件集群（REQ-002~006：骨架/技能/插件包/MCP/市场）~~**全部交付** →
-> 转 P1 体验集群：Shell 输出 64KB+spill、agent-instructions、tool-jobs、会话内模型切换、
-> 附件、快捷键、权限预设、自动标题（逐项立 REQ）。
-> 活体核对新增候选：Shell 输出 64KB+spill、agent-instructions（AGENTS.md/CLAUDE.md）、
-> tool-jobs、time-context、tool-ask-user、侧栏用量卡（token/calls/费用）。
+> 排期建议：~~P0 插件集群（REQ-002~006）~~、~~REQ-007 Shell 输出落盘~~、
+> ~~REQ-008 工作区指令~~（已完成）→ P1 继续：tool-jobs、会话内模型切换、附件、
+> 快捷键、权限预设、自动标题（逐项立 REQ）。
+> 活体核对新增候选：tool-jobs、time-context、tool-ask-user、侧栏用量卡（token/calls/费用）。

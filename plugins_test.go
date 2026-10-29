@@ -6,12 +6,13 @@ import (
 	"testing"
 )
 
-// REQ-002 AC-1: exactly 14 built-ins (incl. 技能/MCP), no duplicate ids,
-// every preset tool maps to a registered plugin, grouping loses nothing.
+// REQ-002 AC-1: exactly 15 built-ins (incl. 技能/MCP/工作区指令), no
+// duplicate ids, every preset tool maps to a registered plugin, grouping
+// loses nothing.
 func TestBuiltinPluginRegistry(t *testing.T) {
 	all := builtinPlugins()
-	if len(all) != 14 {
-		t.Fatalf("registry has %d plugins, want 14", len(all))
+	if len(all) != 15 {
+		t.Fatalf("registry has %d plugins, want 15", len(all))
 	}
 	seen := map[string]bool{}
 	for _, p := range all {
@@ -19,8 +20,12 @@ func TestBuiltinPluginRegistry(t *testing.T) {
 			t.Fatalf("duplicate plugin id %q", p.ID)
 		}
 		seen[p.ID] = true
-		if p.Name == "" || p.Version == "" || p.Category == "" || p.Source == "" || len(p.Tools) == 0 {
+		if p.Name == "" || p.Version == "" || p.Category == "" || p.Source == "" {
 			t.Errorf("plugin %q missing metadata: %+v", p.ID, p)
+		}
+		// context 类插件贡献系统提示词而非工具，允许空 Tools
+		if len(p.Tools) == 0 && p.Kind != "context" {
+			t.Errorf("plugin %q has no tools: %+v", p.ID, p)
 		}
 	}
 	for _, pre := range builtinPresets() {
@@ -52,7 +57,7 @@ func TestPluginControlActions(t *testing.T) {
 	a := newTestApp(t)
 
 	out, failed := a.pluginControl("list", "")
-	if failed || !strings.Contains(out, "共 14 个内置插件") || !strings.Contains(out, "[终端]") {
+	if failed || !strings.Contains(out, "共 15 个内置插件") || !strings.Contains(out, "[终端]") {
 		t.Fatalf("list: %q failed=%v", out, failed)
 	}
 	out, failed = a.pluginControl("info", "bash")

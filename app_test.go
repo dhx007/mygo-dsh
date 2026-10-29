@@ -391,7 +391,7 @@ func TestPluginsPageSections(t *testing.T) {
 
 	a.selectedID = "page:plugins"
 	tt.Frame()
-	if !tt.HasText("内置插件 · 14") || !tt.HasText("Shell 终端") {
+	if !tt.HasText("内置插件 · 15") || !tt.HasText("Shell 终端") {
 		t.Errorf("builtin section missing (texts=%v)", tt.Texts())
 	}
 
@@ -535,7 +535,7 @@ func TestSettingsPluginsSectionGrouped(t *testing.T) {
 	tt := ui.NewTester(a.settingsWindowView, 960, 700)
 	tt.Frame()
 
-	for _, want := range []string{"14 个内置插件", "Shell 终端", "读文件", "Enabled"} {
+	for _, want := range []string{"15 个内置插件", "Shell 终端", "读文件", "Enabled"} {
 		if !tt.HasText(want) {
 			t.Errorf("settings 内置插件 missing %q (texts=%v)", want, tt.Texts())
 		}

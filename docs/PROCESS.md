@@ -87,7 +87,8 @@
   REQ-005 MCP 客户端（internal/mcp stdio JSONRPC、mcp.json 配置、插件页 MCP 段、
   工具经包工具通道挂载并默认走审批门）；REQ-006 插件市场（实验开关「自定义插件市场」
   门控、markets.json 索引、浏览/一键安装）——**P0 插件集群全部交付**；
-  REQ-007 Shell 输出上限 64KB + 落盘 spill + 可配置超时（Shell 设置卡对齐原版 View Shell）。
+  REQ-007 Shell 输出上限 64KB + 落盘 spill + 可配置超时（Shell 设置卡对齐原版 View Shell）；
+  REQ-008 工作区指令（AGENTS.md→CLAUDE.md 发现并注入系统提示词，注册表第 15 项门控）。
 - 活体 UI 核对已完成一轮（`docs/evidence/LIVE-UI-2026-10-30.md`），结构类假设已对齐。
 - 下一批（待立 REQ，按 FEATURE-MATRIX P1 排）：agent-instructions（AGENTS.md/CLAUDE.md）、
   tool-jobs、会话内模型切换、附件、

@@ -1301,6 +1301,9 @@ func (a *app) builtinPluginCard(c *ui.Context, p Plugin) {
 					ui.Text(c, p.ID).FontSize(10).Padding(1, 6).Radius(6).Background(t.Background).TextColor(t.TextMuted)
 				})
 				ui.Text(c, "挂载工具："+strings.Join(p.Tools, ", ")).TextColor(t.TextMuted).FontSize(11)
+				if len(p.Tools) == 0 {
+					ui.Text(c, "贡献：系统提示词注入（无工具）").TextColor(t.TextMuted).FontSize(11)
+				}
 				// Shell 设置卡（REQ-007）：对齐原版 View Shell 的两个字段
 				if p.ID == "bash" {
 					ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
@@ -1795,8 +1798,12 @@ func (a *app) pluginControl(action, id string) (string, bool) {
 		if a.enabledTool(p.ID) {
 			state = "已启用"
 		}
+		toolsJoined := strings.Join(p.Tools, ",")
+		if len(p.Tools) == 0 {
+			toolsJoined = "（无，贡献系统提示词）"
+		}
 		return fmt.Sprintf("id=%s\n名称=%s\n版本=v%s\n分类=%s\n来源=%s\n挂载工具=%s\n状态=%s\n描述=%s",
-			p.ID, p.Name, p.Version, p.Category, p.Source, strings.Join(p.Tools, ","), state, p.Description), false
+			p.ID, p.Name, p.Version, p.Category, p.Source, toolsJoined, state, p.Description), false
 	case "enable", "disable":
 		p, ok := pluginByID(all, id)
 		if !ok {
@@ -2705,6 +2712,12 @@ func (a *app) newAgentFor(ses *Session) *agent.Agent {
 		}
 	}
 	prompt := applyCwdTemplate(preset.SystemPrompt, ses.Meta.Workspace, a.dataDir)
+	// 工作区指令（REQ-008）：AGENTS.md/CLAUDE.md 注入系统提示词末尾
+	if a.enabledTool("instructions") {
+		if instr := loadWorkspaceInstructions(ses.Meta.Workspace); instr != "" {
+			prompt += "\n\n" + instr
+		}
+	}
 	base := agent.Agent{
 		Client:       llm.New(a.cfg.BaseURL, a.cfg.APIKey),
 		Model:        a.cfg.Model,
