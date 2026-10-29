@@ -46,7 +46,7 @@
 | `dsh-repeat-tool-reminder` | 重复工具调用提醒注入 | 无 | ❌ | P2 | — |
 | `dsh-tool-call-timeout-policy` / `dsh-timeout` | 工具超时策略 | 固定默认 60s/上限 600s | 🟡 | P2 | — |
 | `dsh-time-context` | 系统提示注入当前时间 | 无 | ❌ | P2 | — |
-| `dsh-output-retention` | 大输出落盘保留策略 | 简单截断 16KB | 🟡 | P2 | — |
+| `dsh-output-retention` | 大输出落盘保留策略 | ✅ Shell 输出 64KB 上限 + 落盘 spill + 可配置超时（REQ-007，对齐原版 View Shell 卡）；spill 策略包归 ⚪ 框架层 | 🟡 | P2 | REQ-007 |
 
 ## 3. 工具
 

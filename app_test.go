@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+
+	"mygo-harness/internal/tools"
 )
 
 func newTestApp(t *testing.T) *app {
@@ -315,6 +317,46 @@ func TestPluginsPageMarket(t *testing.T) {
 	tt.Frame()
 	if !tt.HasText("已安装") {
 		t.Errorf("installed marker missing (texts=%v)", tt.Texts())
+	}
+}
+
+// REQ-007 AC-4: the Shell card detail exposes timeout/output-cap fields;
+// valid changes persist to config.json and apply to the tools package,
+// invalid input shows a hint.
+func TestShellCardSettings(t *testing.T) {
+	a := newTestApp(t)
+	a.selectedID = "page:plugins"
+	tt := ui.NewTester(a.view, 1200, 780)
+	tt.Frame()
+
+	a.pluginQuery = "Shell" // 只剩 Shell 终端一张卡
+	tt.Frame()
+	if err := tt.Click("Shell 终端"); err != nil {
+		t.Fatalf("expand shell card: %v (texts=%v)", err, tt.Texts())
+	}
+	tt.Frame()
+	if !tt.HasText("命令超时 (ms)") || !tt.HasText("输出上限 (bytes)") {
+		t.Errorf("shell settings missing (texts=%v)", tt.Texts())
+	}
+
+	a.fShellTimeout = "30000"
+	a.fShellCap = "1024"
+	tt.Frame()
+	if a.cfg.ShellTimeoutMS != 30000 || a.cfg.ShellOutputCap != 1024 {
+		t.Fatalf("config not saved: %+v", a.cfg)
+	}
+	b, err := os.ReadFile(a.cfgPath)
+	if err != nil || !strings.Contains(string(b), `"shell_timeout_ms": 30000`) {
+		t.Errorf("config file not persisted: err=%v body=%s", err, b)
+	}
+	if tools.DefaultTimeout != 30*time.Second || tools.OutputCapBytes != 1024 {
+		t.Errorf("tools vars not synced: %v %v", tools.DefaultTimeout, tools.OutputCapBytes)
+	}
+
+	a.fShellTimeout = "abc"
+	tt.Frame()
+	if !tt.HasText("需为整数") {
+		t.Errorf("invalid hint missing (texts=%v)", tt.Texts())
 	}
 }
 

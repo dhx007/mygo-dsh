@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/egoist/mygo"
 )
@@ -25,6 +26,11 @@ type Config struct {
 	// "persistent_terminals" — keep shells alive across tool calls for
 	// every preset, the original's experimental plugin).
 	Experimental map[string]bool `json:"experimental,omitempty"`
+	// Shell settings card (the original's View Shell): default command
+	// timeout in ms and per-stream output cap in bytes; 0 = built-in
+	// default (60000 / 64000). Output beyond the cap spills to a temp file.
+	ShellTimeoutMS int `json:"shell_timeout_ms,omitempty"`
+	ShellOutputCap int `json:"shell_output_cap,omitempty"`
 }
 
 func defaultConfig() *Config {
@@ -117,4 +123,25 @@ func (c *Config) enabledTool(name string) bool {
 // experimentalOn reports whether an experimental switch is enabled.
 func (c *Config) experimentalOn(name string) bool {
 	return c.Experimental != nil && c.Experimental[name]
+}
+
+// shellTimeout returns the default bash command timeout, clamped to
+// 1s..600s (0 → 60000ms).
+func (c *Config) shellTimeout() time.Duration {
+	ms := c.ShellTimeoutMS
+	if ms <= 0 {
+		ms = 60000
+	}
+	ms = min(max(ms, 1000), 600000)
+	return time.Duration(ms) * time.Millisecond
+}
+
+// shellOutputCap returns the bash output cap in bytes, clamped to
+// 1KB..16MB (0 → 64000).
+func (c *Config) shellOutputCap() int {
+	capBytes := c.ShellOutputCap
+	if capBytes <= 0 {
+		capBytes = 64000
+	}
+	return min(max(capBytes, 1024), 16*1024*1024)
 }

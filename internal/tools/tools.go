@@ -36,11 +36,31 @@ type Tool struct {
 
 const maxOutput = 16 * 1024
 
-func truncate(s string) string {
-	if len(s) <= maxOutput {
+// Shell output configuration, synced from the app's Shell settings card
+// (the original's View Shell: 60000ms default timeout, 64000-byte output
+// cap; output beyond the cap spills to a temp file rather than being lost).
+var (
+	OutputCapBytes = 64000
+	DefaultTimeout = 60 * time.Second
+)
+
+// truncateWithSpill caps output at cap bytes; anything beyond spills to a
+// temp file (reported in the text so the model can read_file it). If the
+// spill write fails, it degrades to plain truncation.
+func truncateWithSpill(s string, cap int) string {
+	if len(s) <= cap {
 		return s
 	}
-	return s[:maxOutput] + fmt.Sprintf("\n…[输出已截断，共 %d 字节]", len(s))
+	head := s[:cap]
+	if f, err := os.CreateTemp("", "dsh-shell-*.log"); err == nil {
+		path := f.Name()
+		_, werr := f.WriteString(s)
+		f.Close()
+		if werr == nil {
+			return head + fmt.Sprintf("\n…[输出超过 %d 字节上限，完整输出已落盘：%s（可用 read_file 读取）]", cap, path)
+		}
+	}
+	return head + fmt.Sprintf("\n…[输出已截断，共 %d 字节]", len(s))
 }
 
 func resolve(cwd, p string) string {
@@ -86,7 +106,7 @@ var all = []Tool{
 			if strings.TrimSpace(a.Command) == "" {
 				return "error: command is empty", true
 			}
-			timeout := 60 * time.Second
+			timeout := DefaultTimeout
 			if a.TimeoutOK > 0 {
 				timeout = time.Duration(min(a.TimeoutOK, 600)) * time.Second
 			}
@@ -96,7 +116,7 @@ var all = []Tool{
 			cmd.Dir = cwd
 			cmd.Env = os.Environ()
 			out, err := cmd.CombinedOutput()
-			text := truncate(string(out))
+			text := truncateWithSpill(string(out), OutputCapBytes)
 			if err != nil {
 				text += fmt.Sprintf("\n[exit] %v", err)
 				return text, true

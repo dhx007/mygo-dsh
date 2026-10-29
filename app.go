@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -220,6 +221,9 @@ type app struct {
 	fKey, fURL, fModel, fWorkDir string
 	autoApprove                  bool
 
+	// Shell 设置卡（REQ-007）：一发式/持久 shell 的超时与输出上限
+	fShellTimeout, fShellCap string
+
 	// preset editor
 	epOpen   bool
 	epLabel  string
@@ -273,6 +277,15 @@ func newApp() *app {
 	a.refreshSessions()
 	a.refreshPackages()
 	a.mcp = newMCPManager(dir)
+	// Shell 设置卡初值与 tools 包同步（REQ-007）
+	if cfg.ShellTimeoutMS > 0 {
+		a.fShellTimeout = strconv.Itoa(cfg.ShellTimeoutMS)
+	}
+	if cfg.ShellOutputCap > 0 {
+		a.fShellCap = strconv.Itoa(cfg.ShellOutputCap)
+	}
+	tools.DefaultTimeout = cfg.shellTimeout()
+	tools.OutputCapBytes = cfg.shellOutputCap()
 	return a
 }
 
@@ -280,6 +293,42 @@ func (a *app) refreshSessions() { a.sessions = a.store.List() }
 
 // refreshPackages rescans installed plugin packages (startup + install/uninstall).
 func (a *app) refreshPackages() { a.pkgCache = installedPackages(a.dataDir) }
+
+// syncShellSettings persists the Shell card inputs and applies them to the
+// tools package (REQ-007). Returns a short error hint, or "" when clean.
+func (a *app) syncShellSettings() string {
+	outStr, capStr := strings.TrimSpace(a.fShellTimeout), strings.TrimSpace(a.fShellCap)
+	outMS, capB := 0, 0
+	if outStr != "" {
+		v, err := strconv.Atoi(outStr)
+		if err != nil {
+			return "命令超时需为整数（毫秒）"
+		}
+		outMS = v
+	}
+	if capStr != "" {
+		v, err := strconv.Atoi(capStr)
+		if err != nil {
+			return "输出上限需为整数（字节）"
+		}
+		capB = v
+	}
+	changed := false
+	if outMS > 0 && outMS != a.cfg.ShellTimeoutMS {
+		a.cfg.ShellTimeoutMS = outMS
+		changed = true
+	}
+	if capB > 0 && capB != a.cfg.ShellOutputCap {
+		a.cfg.ShellOutputCap = capB
+		changed = true
+	}
+	if changed {
+		_ = saveConfig(a.cfg, a.cfgPath)
+	}
+	tools.DefaultTimeout = a.cfg.shellTimeout()
+	tools.OutputCapBytes = a.cfg.shellOutputCap()
+	return ""
+}
 
 // boolRef lazily allocates a toggle for detail-expand state.
 func (a *app) boolRef(m map[string]*bool, key string) *bool {
@@ -1252,6 +1301,18 @@ func (a *app) builtinPluginCard(c *ui.Context, p Plugin) {
 					ui.Text(c, p.ID).FontSize(10).Padding(1, 6).Radius(6).Background(t.Background).TextColor(t.TextMuted)
 				})
 				ui.Text(c, "挂载工具："+strings.Join(p.Tools, ", ")).TextColor(t.TextMuted).FontSize(11)
+				// Shell 设置卡（REQ-007）：对齐原版 View Shell 的两个字段
+				if p.ID == "bash" {
+					ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, "命令超时 (ms)").FontSize(12)
+						ui.TextInput(c, &a.fShellTimeout).Width(110)
+						ui.Text(c, "输出上限 (bytes)").FontSize(12)
+						ui.TextInput(c, &a.fShellCap).Width(130)
+					})
+					if hint := a.syncShellSettings(); hint != "" {
+						ui.Text(c, hint).FontSize(10).TextColor(t.Danger)
+					}
+				}
 				sw := a.enabledTool(p.ID)
 				ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, "启用").FontSize(12)

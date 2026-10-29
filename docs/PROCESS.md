@@ -86,9 +86,10 @@
   本地插件包运行时（plugin.json 包模型/goja 沙箱/Add plugin/卸载/持久终端实验开关）；
   REQ-005 MCP 客户端（internal/mcp stdio JSONRPC、mcp.json 配置、插件页 MCP 段、
   工具经包工具通道挂载并默认走审批门）；REQ-006 插件市场（实验开关「自定义插件市场」
-  门控、markets.json 索引、浏览/一键安装）——**P0 插件集群全部交付**。
+  门控、markets.json 索引、浏览/一键安装）——**P0 插件集群全部交付**；
+  REQ-007 Shell 输出上限 64KB + 落盘 spill + 可配置超时（Shell 设置卡对齐原版 View Shell）。
 - 活体 UI 核对已完成一轮（`docs/evidence/LIVE-UI-2026-10-30.md`），结构类假设已对齐。
-- 下一批（待立 REQ，按 FEATURE-MATRIX P1 排）：持久 shell 输出 64KB+spill、
-  agent-instructions（AGENTS.md/CLAUDE.md）、tool-jobs、会话内模型切换、附件、
+- 下一批（待立 REQ，按 FEATURE-MATRIX P1 排）：agent-instructions（AGENTS.md/CLAUDE.md）、
+  tool-jobs、会话内模型切换、附件、
   快捷键、权限预设、目录选择器、自动标题；候选：time-context、tool-ask-user、
   侧栏用量卡、Plugin manager 更新检查、MCP resources/SSE、工作流编排、终端面板。

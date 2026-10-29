@@ -123,7 +123,7 @@ func (s *PersistentShell) Run(ctx context.Context, argsJSON string) (string, boo
 	if strings.TrimSpace(a.Command) == "" {
 		return "error: command is empty", true
 	}
-	timeout := 60 * time.Second
+	timeout := DefaultTimeout
 	if a.TimeoutOK > 0 {
 		timeout = time.Duration(min(a.TimeoutOK, 600)) * time.Second
 	}
@@ -155,12 +155,12 @@ func (s *PersistentShell) Run(ctx context.Context, argsJSON string) (string, boo
 			if ctx.Err() != nil {
 				return "[canceled]", true
 			}
-			return truncate(out) + fmt.Sprintf("\n[exit] 命令超时（%s），持久 shell 已重置，下次调用将在新 shell 中执行", timeout), true
+			return truncateWithSpill(out, OutputCapBytes) + fmt.Sprintf("\n[exit] 命令超时（%s），持久 shell 已重置，下次调用将在新 shell 中执行", timeout), true
 		case dead:
 			// The shell itself is gone (exit, kill $$, crash). Never
 			// re-run the command — it may have had side effects.
 			s.killLocked()
-			return truncate(out) + "\n[exit] bash 会话已退出（执行了 exit 或进程终止）；状态已清零，下次调用将自动重启新 shell", true
+			return truncateWithSpill(out, OutputCapBytes) + "\n[exit] bash 会话已退出（执行了 exit 或进程终止）；状态已清零，下次调用将自动重启新 shell", true
 		default:
 			if rc != 0 {
 				out += fmt.Sprintf("\n[exit] rc=%d", rc)
@@ -168,7 +168,7 @@ func (s *PersistentShell) Run(ctx context.Context, argsJSON string) (string, boo
 			if out == "" {
 				out = "(no output)"
 			}
-			return truncate(out), rc != 0
+			return truncateWithSpill(out, OutputCapBytes), rc != 0
 		}
 	}
 	return "error: 持久 bash 无法接收命令，已重置", true
