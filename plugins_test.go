@@ -6,13 +6,13 @@ import (
 	"testing"
 )
 
-// REQ-002 AC-1: exactly 15 built-ins (incl. 技能/MCP/工作区指令), no
+// REQ-002 AC-1: exactly 16 built-ins (incl. 技能/MCP/工作区指令/后台任务), no
 // duplicate ids, every preset tool maps to a registered plugin, grouping
 // loses nothing.
 func TestBuiltinPluginRegistry(t *testing.T) {
 	all := builtinPlugins()
-	if len(all) != 15 {
-		t.Fatalf("registry has %d plugins, want 15", len(all))
+	if len(all) != 16 {
+		t.Fatalf("registry has %d plugins, want 16", len(all))
 	}
 	seen := map[string]bool{}
 	for _, p := range all {
@@ -57,7 +57,7 @@ func TestPluginControlActions(t *testing.T) {
 	a := newTestApp(t)
 
 	out, failed := a.pluginControl("list", "")
-	if failed || !strings.Contains(out, "共 15 个内置插件") || !strings.Contains(out, "[终端]") {
+	if failed || !strings.Contains(out, "共 16 个内置插件") || !strings.Contains(out, "[终端]") {
 		t.Fatalf("list: %q failed=%v", out, failed)
 	}
 	out, failed = a.pluginControl("info", "bash")

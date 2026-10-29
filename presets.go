@@ -29,6 +29,7 @@ const standardPrompt = "You are DeepSeek Harness, a coding agent running on the 
 	"You can run shell commands and read, write and edit files; prefer tools over guessing and inspect real files before claiming anything about them. " +
 	"Plan multi-step work with the todo tool, and delegate self-contained subtasks with the task tool. " +
 	"Check the skill list when a task might match an installed skill, and run the skill to follow its instructions. " +
+	"For long-running commands (dev servers, big builds), start them with bash's background flag and monitor with job_output / job_list. " +
 	"Keep commands safe and reversible; never destroy user data without asking. " +
 	"Answer concisely, in the user's language (Chinese when they write Chinese). " +
 	"Current working directory: {cwd}"
@@ -55,10 +56,10 @@ const creatorPrompt = "You are DeepSeek Harness in creator mode: the mode that b
 	"Answer concisely, in the user's language (Chinese when they write Chinese). " +
 	"Current working directory: {cwd}. App data directory: {data}"
 
-var standardTools = []string{"bash", "read_file", "write_file", "edit_file", "glob", "grep", "web_fetch", "web_search", "todo", "task", "skill"}
+var standardTools = []string{"bash", "read_file", "write_file", "edit_file", "glob", "grep", "web_fetch", "web_search", "todo", "task", "skill", "job_output", "job_list", "job_kill"}
 var minimalTools = []string{"bash", "write_file", "edit_file"}
 var ptcTools = []string{"run_code"}
-var creatorTools = []string{"bash", "read_file", "write_file", "edit_file", "glob", "grep", "web_fetch", "web_search", "todo", "task", "skill"}
+var creatorTools = []string{"bash", "read_file", "write_file", "edit_file", "glob", "grep", "web_fetch", "web_search", "todo", "task", "skill", "job_output", "job_list", "job_kill"}
 
 func builtinPresets() []Preset {
 	return []Preset{

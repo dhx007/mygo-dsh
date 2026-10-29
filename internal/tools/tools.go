@@ -97,14 +97,22 @@ var all = []Tool{
 		},
 		Run: func(ctx context.Context, argsJSON, cwd string) (string, bool) {
 			var a struct {
-				Command   string `json:"command"`
-				TimeoutOK int    `json:"timeout_seconds"`
+				Command    string `json:"command"`
+				TimeoutOK  int    `json:"timeout_seconds"`
+				Background bool   `json:"background"`
 			}
 			if err := args(ctx, argsJSON, &a); err != nil {
 				return err.Error(), true
 			}
 			if strings.TrimSpace(a.Command) == "" {
 				return "error: command is empty", true
+			}
+			if a.Background {
+				id, err := Jobs.Start(a.Command, cwd)
+				if err != nil {
+					return "error: 启动后台任务: " + err.Error(), true
+				}
+				return fmt.Sprintf("后台任务已启动：%s\n长命令不再受超时限制——用 job_output 查看输出、job_list 列出全部任务、job_kill 终止。", id), false
 			}
 			timeout := DefaultTimeout
 			if a.TimeoutOK > 0 {
@@ -515,6 +523,83 @@ var all = []Tool{
 				return "error: " + err.Error(), true
 			}
 			return parseDDG(string(body)), false
+		},
+	},
+	{
+		Name: "job_output",
+		Description: "Read a background job's accumulated output. Returns the text from " +
+			"offset (bytes) plus the job state; page forward with the returned offset.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"job_id": map[string]any{"type": "string", "description": "Job id from job_list or the bash background start message."},
+				"offset": map[string]any{"type": "integer", "description": "Byte offset to read from, default 0."},
+			},
+			"required": []string{"job_id"},
+		},
+		Run: func(ctx context.Context, argsJSON, cwd string) (string, bool) {
+			var a struct {
+				JobID  string `json:"job_id"`
+				Offset int    `json:"offset"`
+			}
+			if err := args(ctx, argsJSON, &a); err != nil {
+				return err.Error(), true
+			}
+			if strings.TrimSpace(a.JobID) == "" {
+				return "error: job_id 为空", true
+			}
+			text, state, _, err := Jobs.Output(a.JobID, a.Offset)
+			if err != nil {
+				return "error: " + err.Error(), true
+			}
+			return fmt.Sprintf("[状态：%s]\n%s", state, text), false
+		},
+	},
+	{
+		Name:        "job_list",
+		Description: "List all background jobs: id, command, state, exit code, output size.",
+		Parameters:  map[string]any{"type": "object", "properties": map[string]any{}},
+		Run: func(ctx context.Context, argsJSON, cwd string) (string, bool) {
+			list := Jobs.List()
+			if len(list) == 0 {
+				return "(没有后台任务)", false
+			}
+			var b strings.Builder
+			for _, j := range list {
+				fmt.Fprintf(&b, "%s [%s] %s\n   启动 %s · 输出 %d 字节", j.ID, j.State, j.Command, j.Started.Format("15:04:05"), j.Bytes)
+				if j.Exit != "" {
+					fmt.Fprintf(&b, " · %s", j.Exit)
+				}
+				b.WriteString("\n")
+			}
+			return strings.TrimRight(b.String(), "\n"), false
+		},
+	},
+	{
+		Name:        "job_kill",
+		Description: "Kill a background job's whole process tree.",
+		Mutating:    true,
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"job_id": map[string]any{"type": "string", "description": "Job id to kill."},
+			},
+			"required": []string{"job_id"},
+		},
+		Run: func(ctx context.Context, argsJSON, cwd string) (string, bool) {
+			var a struct {
+				JobID string `json:"job_id"`
+			}
+			if err := args(ctx, argsJSON, &a); err != nil {
+				return err.Error(), true
+			}
+			if strings.TrimSpace(a.JobID) == "" {
+				return "error: job_id 为空", true
+			}
+			if err := Jobs.Kill(a.JobID); err != nil {
+				return "error: " + err.Error(), true
+			}
+			return "已终止 " + a.JobID, false
 		},
 	},
 }

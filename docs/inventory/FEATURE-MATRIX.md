@@ -63,7 +63,7 @@
 | `dsh-tool-skill` / `dsh-skill`(-filesystem, -office, -badge, experimental-badge-skill-bundle) / `client-ui-skill` | **技能系统**（SKILL.md 发现/调用/徽标） | ✅ 核心（REQ-003）：双目录 SKILL.md 发现 + `skill` 工具 + 设置·技能分区；徽标/office 技能缺 | 🟡 | **P0** | REQ-003 |
 | `dsh-tool-subagent-control` | 子代理运行控制 | 无 | ❌ | P1 | — |
 | `dsh-tool-terminal` / `dsh-terminal`(-bash) / `experimental-terminal-bundle` / `client-ui-sidebar-terminal` / `api-terminal-controller` | **内嵌终端**（持久 shell 面板） | 无（README 差距） | ❌ | P1 | — |
-| `dsh-tool-jobs` / `dsh-jobs`(-local) / `client-ui-jobs` / `api-job-controller` | 后台任务（长命令后台运行/列表） | 无 | ❌ | P1 | — |
+| `dsh-tool-jobs` / `dsh-jobs`(-local) / `client-ui-jobs` / `api-job-controller` | 后台任务（长命令后台运行/列表） | 🟡 三工具全链路（REQ-009）：bash background 参数 + job_output/job_list/job_kill + 应用级注册表；Task Board UI 缺 | 🟡 | P1 | REQ-009 |
 | `dsh-tool-schedule` / `dsh-schedule` / `client-ui-schedule` | **定时任务与提醒**（4 个提醒工具 + 时钟）；活体证实侧栏有 Automation tasks 全局面板 | 无 | ❌ | P1 | — |
 | `dsh-tool-workflow` / `dsh-workflow`(-ptc) / `client-ui-workflow-run` | **工作流编排** | 无（README 差距） | ❌ | P1 | — |
 | `dsh-tool-present` / `client-ui-deliverables` | 交付物展示面板 | 无 | ❌ | P2 | — |
@@ -145,11 +145,11 @@
 | 状态 | 数量（截至 2026-10-30） |
 |---|---|
 | ✅ 已复刻 | 18 |
-| 🟡 部分复刻 | 23 |
-| ❌ 未复刻 | 26 |
+| 🟡 部分复刻 | 24 |
+| ❌ 未复刻 | 25 |
 | ⚪ 不逐包复刻 | 14 |
 
 > 排期建议：~~P0 插件集群（REQ-002~006）~~、~~REQ-007 Shell 输出落盘~~、
-> ~~REQ-008 工作区指令~~（已完成）→ P1 继续：tool-jobs、会话内模型切换、附件、
-> 快捷键、权限预设、自动标题（逐项立 REQ）。
-> 活体核对新增候选：tool-jobs、time-context、tool-ask-user、侧栏用量卡（token/calls/费用）。
+> ~~REQ-008 工作区指令~~、~~REQ-009 后台任务~~（已完成）→ P1 继续：会话内模型切换、
+> 附件、快捷键、权限预设、自动标题（逐项立 REQ）。
+> 活体核对新增候选：time-context、tool-ask-user、侧栏用量卡（token/calls/费用）。
