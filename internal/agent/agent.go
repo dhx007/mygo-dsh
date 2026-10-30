@@ -208,7 +208,13 @@ func (a *Agent) toolSpecs() []llm.ToolSpec {
 // Run processes one user message to completion. The returned error is
 // also passed to OnDone.
 func (a *Agent) Run(ctx context.Context, userText string, cb Callbacks) error {
-	a.History = append(a.History, llm.Message{Role: "user", Content: userText})
+	return a.RunMessage(ctx, llm.Message{Role: "user", Content: userText}, cb)
+}
+
+// RunMessage is Run with a prepared user message (attachments arrive as
+// multimodal Parts, REQ-011).
+func (a *Agent) RunMessage(ctx context.Context, user llm.Message, cb Callbacks) error {
+	a.History = append(a.History, user)
 	maxTurns := a.MaxTurns
 	if maxTurns <= 0 {
 		maxTurns = defaultMaxTurns

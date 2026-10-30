@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -66,6 +67,7 @@ type uiMsg struct {
 	id            int
 	role          string // user | assistant | tool | todo | subagent
 	text          string
+	files         []string // 附件名（REQ-011，用户消息）
 	reasoning     string
 	reasoningOpen bool
 	tool          *toolView
@@ -228,6 +230,11 @@ type app struct {
 	modelMenu    bool
 	modelFetched bool
 	modelOptions []string
+
+	// REQ-011：附件
+	pendingFiles []pendingAttachment
+	attachMenu   bool
+	attachInput  string
 
 	// preset editor
 	epOpen   bool
@@ -816,9 +823,20 @@ func (a *app) chatTab(c *ui.Context) {
 		if a.pending != nil {
 			a.approvalCard(c)
 		}
-		// 内嵌式输入框：圆角容器 = 输入行 + 操作行
+		// 内嵌式输入框：圆角容器 = 附件 chips + 输入行 + 操作行
 		ui.Column(c).Padding(8, 20, 4).Children(func() {
 			ui.Column(c).Radius(14).BorderWidth(1, 1, 1, 1).BorderColor(t.Border).Background(t.Surface).Padding(12, 14).Gap(10).Children(func() {
+				// 附件 chips（REQ-011）
+				if len(a.pendingFiles) > 0 {
+					ui.Row(c).Gap(6).Children(func() {
+						for _, f := range a.pendingFiles {
+							file := f
+							if ui.Text(c, "📎 "+file.Name+"  ×").FontSize(11).Padding(2, 8).Radius(8).Background(t.Background).TextColor(t.TextMuted).Clicked() {
+								a.removeAttachment(file.Name)
+							}
+						}
+					})
+				}
 				in := ui.TextInput(c, &a.input).Placeholder("发消息，/ 调用指令").BorderWidth(0, 0, 0, 0)
 				if a.focusComposer > 0 {
 					// Focus() re-asserts every frame for a two-frame window:
@@ -829,10 +847,11 @@ func (a *app) chatTab(c *ui.Context) {
 					a.focusComposer--
 				}
 				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-					if ui.Button(c, "＋").Width(28).Height(28).Clicked() {
-						a.input = "/"
-						a.focusComposer = 2
+					plusBtn := ui.Button(c, "＋").Width(28).Height(28)
+					if plusBtn.Clicked() {
+						a.attachMenu = !a.attachMenu
 					}
+					ui.Popover(c, plusBtn, &a.attachMenu, func() { a.attachPopover(c) })
 					if ui.Text(c, "/help 命令").TextColor(t.TextMuted).FontSize(12).Clicked() {
 						a.note("可用命令：/new 新会话 · /compact 压缩历史 · /fork 分叉会话 · /mode <名称> 切换模式 · /model <名> 切换本会话模型 · /cwd <目录> 切换工作区 · /trajectory 轨迹 · /help 本帮助")
 					}
@@ -976,9 +995,19 @@ func (a *app) message(c *ui.Context, m *uiMsg) {
 	t := c.Theme()
 	switch m.role {
 	case "user":
-		ui.Row(c).Children(func() {
-			ui.Spacer(c)
-			ui.Text(c, m.text).Selectable().Padding(8, 12).Radius(14).Background(t.Surface).MaxWidth(560)
+		ui.Column(c).Gap(2).Children(func() {
+			if len(m.files) > 0 {
+				ui.Row(c).Gap(4).Children(func() {
+					ui.Spacer(c)
+					for _, name := range m.files {
+						ui.Text(c, "📎 "+name).FontSize(11).Padding(2, 8).Radius(8).Background(t.Background).TextColor(t.TextMuted)
+					}
+				})
+			}
+			ui.Row(c).Children(func() {
+				ui.Spacer(c)
+				ui.Text(c, m.text).Selectable().Padding(8, 12).Radius(14).Background(t.Surface).MaxWidth(560)
+			})
 		})
 	case "tool":
 		label := m.tool.name
@@ -2591,6 +2620,160 @@ func (a *app) stop() {
 	}
 }
 
+// ---- 附件（REQ-011）----
+
+// pendingAttachment is one file staged for the next outgoing message.
+type pendingAttachment struct {
+	Name    string // 显示名（文件基名）
+	Text    string // 文本附件内容（已截断）
+	MIME    string // 图片 MIME
+	Data    []byte // 图片字节
+	IsImage bool
+}
+
+func imageMime(ext string) string {
+	switch ext {
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	}
+	return ""
+}
+
+// addAttachmentPath validates and stages one file (workspace-relative or
+// absolute). Text ≤64KB (truncated with a note), images ≤8MB.
+func (a *app) addAttachmentPath(p string) {
+	p = strings.TrimSpace(p)
+	a.attachInput = ""
+	a.errText = ""
+	if p == "" {
+		a.errText = "请输入文件路径"
+		return
+	}
+	if !filepath.IsAbs(p) {
+		base := a.cfg.WorkDir
+		if a.ses != nil && a.ses.Meta.Workspace != "" {
+			base = a.ses.Meta.Workspace
+		}
+		p = filepath.Join(base, p)
+	}
+	st, err := os.Stat(p)
+	if err != nil {
+		a.errText = "文件不存在：" + p
+		return
+	}
+	if st.IsDir() {
+		a.errText = "不能附加目录：" + p
+		return
+	}
+	name := filepath.Base(p)
+	for _, f := range a.pendingFiles {
+		if f.Name == name {
+			a.errText = "附件已存在：" + name
+			return
+		}
+	}
+	if mime := imageMime(strings.ToLower(filepath.Ext(p))); mime != "" {
+		if st.Size() > 8<<20 {
+			a.errText = "图片超过 8MB 上限：" + name
+			return
+		}
+		data, rerr := os.ReadFile(p) //nolint:gosec
+		if rerr != nil {
+			a.errText = "读取失败：" + rerr.Error()
+			return
+		}
+		a.pendingFiles = append(a.pendingFiles, pendingAttachment{Name: name, IsImage: true, MIME: mime, Data: data})
+	} else {
+		data, rerr := os.ReadFile(p) //nolint:gosec
+		if rerr != nil {
+			a.errText = "读取失败：" + rerr.Error()
+			return
+		}
+		content := string(data)
+		if len(content) > 64*1024 {
+			content = content[:64*1024] + "\n…[附件内容超过 64KB，已截断]"
+		}
+		a.pendingFiles = append(a.pendingFiles, pendingAttachment{Name: name, Text: content})
+	}
+	a.attachMenu = false
+}
+
+func (a *app) removeAttachment(name string) {
+	for i, f := range a.pendingFiles {
+		if f.Name == name {
+			a.pendingFiles = append(a.pendingFiles[:i], a.pendingFiles[i+1:]...)
+			return
+		}
+	}
+}
+
+// buildUserMessage assembles the outgoing user message: text attachments
+// are inlined as fenced blocks, images become multimodal image parts.
+func (a *app) buildUserMessage(text string) llm.Message {
+	full := text
+	var images []pendingAttachment
+	for _, f := range a.pendingFiles {
+		if f.IsImage {
+			images = append(images, f)
+			continue
+		}
+		ext := strings.TrimPrefix(filepath.Ext(f.Name), ".")
+		full += "\n\n[附件：" + f.Name + "]\n```" + ext + "\n" + f.Text + "\n```"
+	}
+	if len(images) == 0 {
+		return llm.Message{Role: "user", Content: full}
+	}
+	parts := []llm.ContentPart{{Type: "text", Text: full}}
+	for _, f := range images {
+		parts = append(parts, llm.ContentPart{
+			Type:     "image_url",
+			ImageURL: "data:" + f.MIME + ";base64," + base64.StdEncoding.EncodeToString(f.Data),
+		})
+	}
+	return llm.Message{Role: "user", Parts: parts}
+}
+
+// attachPopover is the ＋ menu: a path input plus the native file picker
+// (windowed only).
+func (a *app) attachPopover(c *ui.Context) {
+	t := c.Theme()
+	ui.Column(c).Width(340).Gap(6).Padding(8).Children(func() {
+		ui.TextInput(c, &a.attachInput).Placeholder("文件路径（相对工作区；文本或图片）…")
+		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+			if ui.Button(c, "添加").Clicked() {
+				a.addAttachmentPath(a.attachInput)
+			}
+			if a.win != nil {
+				if ui.Button(c, "选择文件…").Clicked() {
+					a.pickAttachmentDialog()
+				}
+			}
+			ui.Text(c, "文本 ≤64KB · 图片 ≤8MB").FontSize(10).TextColor(t.TextMuted)
+		})
+	})
+}
+
+// pickAttachmentDialog opens the native multi-file picker (windowed mode).
+func (a *app) pickAttachmentDialog() {
+	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+		Title:       "添加附件",
+		Multiple:    true,
+		ButtonLabel: "添加",
+	})
+	if err != nil || len(paths) == 0 {
+		return
+	}
+	for _, p := range paths {
+		a.addAttachmentPath(p)
+	}
+}
+
 func (a *app) send() {
 	text := strings.TrimSpace(a.input)
 	if text == "" || a.busy {
@@ -2615,18 +2798,29 @@ func (a *app) send() {
 	a.input = ""
 	a.focusComposer = 2 // keep typing the next message after 发送
 	a.errText = ""
-	a.ses.AppendEvent("user", map[string]any{"text": text})
+	names := make([]string, 0, len(a.pendingFiles))
+	for _, f := range a.pendingFiles {
+		names = append(names, f.Name)
+	}
+	evData := map[string]any{"text": text}
+	if len(names) > 0 {
+		evData["attachments"] = names
+	}
+	a.ses.AppendEvent("user", evData)
 	if a.ses.Meta.Title == "新会话" {
 		a.ses.Retitle(ellipsis(text, 24))
 		a.refreshSessions()
 	}
 	a.nextID++
-	a.msgs = append(a.msgs, &uiMsg{id: a.nextID, role: "user", text: text, done: true})
+	a.msgs = append(a.msgs, &uiMsg{id: a.nextID, role: "user", text: text, files: names, done: true})
 	a.nextID++
 	reply := &uiMsg{id: a.nextID, role: "assistant", reasoningOpen: true}
 	a.msgs = append(a.msgs, reply)
 	a.busy = true
 	a.status = "思考中…"
+
+	userMsg := a.buildUserMessage(text)
+	a.pendingFiles = nil
 
 	if a.ag == nil {
 		a.ag = a.newAgentFor(a.ses)
@@ -2736,7 +2930,7 @@ func (a *app) send() {
 			})
 		},
 	}
-	go a.ag.Run(ctx, text, cbs)
+	go a.ag.RunMessage(ctx, userMsg, cbs)
 }
 
 // dropAgent discards the session agent, releasing its persistent shell.

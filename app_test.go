@@ -441,6 +441,149 @@ func TestComposerModelMenu(t *testing.T) {
 	}
 }
 
+// REQ-011 AC-1/3: text attachments — stage via relative path, chip in the
+// composer, inlined fenced content on send, trajectory note, cleared after.
+func TestAttachmentTextFlow(t *testing.T) {
+	a := newTestApp(t)
+	srv := mockDeepSeek(t, "收到附件")
+	a.cfg.BaseURL = srv.URL
+	a.cfg.APIKey = "sk-test"
+	tt := ui.NewTester(a.view, 1200, 780)
+	tt.Frame()
+
+	if err := tt.Click("⊕ 新会话"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+
+	if err := os.WriteFile(filepath.Join(a.cfg.WorkDir, "a.txt"), []byte("hello-attachment"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a.addAttachmentPath("a.txt")
+	if a.errText != "" || len(a.pendingFiles) != 1 {
+		t.Fatalf("add failed: %q files=%v", a.errText, a.pendingFiles)
+	}
+	tt.Frame()
+	if !tt.HasText("📎 a.txt") {
+		t.Errorf("chip missing (texts=%v)", tt.Texts())
+	}
+	// 不存在路径
+	a.addAttachmentPath("nope.txt")
+	if !strings.Contains(a.errText, "不存在") {
+		t.Fatalf("missing file: %q", a.errText)
+	}
+
+	a.input = "看这个文件"
+	a.send()
+	waitFor(t, func() bool { return !a.busy }, "send never finished")
+
+	hist := a.ses.LoadHistory()
+	if len(hist) == 0 || !strings.Contains(hist[0].Content, "[附件：a.txt]") || !strings.Contains(hist[0].Content, "hello-attachment") {
+		t.Fatalf("attachment not inlined: %+v", hist)
+	}
+	found := false
+	for _, ev := range a.ses.Events() {
+		if ev.Kind == "user" {
+			if names, _ := ev.Data["attachments"].([]any); len(names) == 1 && names[0] == "a.txt" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("trajectory event missing attachments")
+	}
+	if len(a.pendingFiles) != 0 {
+		t.Errorf("pendingFiles not cleared: %v", a.pendingFiles)
+	}
+}
+
+// REQ-011 AC-2: image attachments become multimodal parts (data URL) in
+// history and the message bubble shows the file name.
+func TestAttachmentImageFlow(t *testing.T) {
+	a := newTestApp(t)
+	srv := mockDeepSeek(t, "看到图了")
+	a.cfg.BaseURL = srv.URL
+	a.cfg.APIKey = "sk-test"
+	tt := ui.NewTester(a.view, 1200, 780)
+	tt.Frame()
+
+	if err := tt.Click("⊕ 新会话"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+
+	png := append([]byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A}, make([]byte, 64)...)
+	if err := os.WriteFile(filepath.Join(a.cfg.WorkDir, "img.png"), png, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a.addAttachmentPath("img.png")
+	if a.errText != "" || len(a.pendingFiles) != 1 || !a.pendingFiles[0].IsImage {
+		t.Fatalf("add image failed: %q %v", a.errText, a.pendingFiles)
+	}
+	a.input = "看这张图"
+	a.send()
+	waitFor(t, func() bool { return !a.busy }, "send never finished")
+
+	hist := a.ses.LoadHistory()
+	if len(hist) == 0 || len(hist[0].Parts) != 2 {
+		t.Fatalf("parts missing: %+v", hist)
+	}
+	if hist[0].Parts[0].Text != "看这张图" || !strings.HasPrefix(hist[0].Parts[1].ImageURL, "data:image/png;base64,") {
+		t.Fatalf("parts content: %+v", hist[0].Parts)
+	}
+	tt.Frame()
+	if !tt.HasText("📎 img.png") {
+		t.Errorf("bubble chip missing (texts=%v)", tt.Texts())
+	}
+	// 超 8MB 拒绝
+	big := filepath.Join(a.cfg.WorkDir, "big.png")
+	if err := os.WriteFile(big, make([]byte, 9<<20), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a.addAttachmentPath("big.png")
+	if !strings.Contains(a.errText, "8MB") {
+		t.Fatalf("oversize image: %q", a.errText)
+	}
+}
+
+// REQ-011 AC-1: the ＋ popover stages attachments; the chip removes them.
+func TestComposerAttachUI(t *testing.T) {
+	a := newTestApp(t)
+	tt := ui.NewTester(a.view, 1200, 780)
+	tt.Frame()
+
+	if err := tt.Click("⊕ 新会话"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if err := os.WriteFile(filepath.Join(a.cfg.WorkDir, "a.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tt.Click("＋"); err != nil {
+		t.Fatalf("open attach menu: %v (texts=%v)", err, tt.Texts())
+	}
+	tt.Frame()
+	if !tt.HasText("添加") || !tt.HasText("文本 ≤64KB · 图片 ≤8MB") {
+		t.Errorf("attach popover missing (texts=%v)", tt.Texts())
+	}
+	a.attachInput = "a.txt"
+	if err := tt.Click("添加"); err != nil {
+		t.Fatalf("click 添加: %v (texts=%v)", err, tt.Texts())
+	}
+	tt.Frame()
+	if !tt.HasText("📎 a.txt  ×") {
+		t.Errorf("chip missing after add (texts=%v)", tt.Texts())
+	}
+	if err := tt.Click("📎 a.txt  ×"); err != nil {
+		t.Fatalf("click chip remove: %v", err)
+	}
+	tt.Frame()
+	if len(a.pendingFiles) != 0 {
+		t.Errorf("attachment not removed: %v", a.pendingFiles)
+	}
+}
+
 // REQ-001 AC-6: dropping the agent releases the shell process; Close is idempotent.
 func TestDropAgentClosesShell(t *testing.T) {
 	a := newTestApp(t)

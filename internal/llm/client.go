@@ -26,15 +26,104 @@ type ToolCall struct {
 	} `json:"function"`
 }
 
+// ContentPart is one part of a multimodal content array (REQ-011): text or
+// an image reference.
+type ContentPart struct {
+	Type     string `json:"type"` // text | image_url
+	Text     string `json:"text,omitempty"`
+	ImageURL string `json:"-"` // 序列化为嵌套 {"image_url":{"url":…}}
+}
+
+func (p ContentPart) MarshalJSON() ([]byte, error) {
+	switch p.Type {
+	case "image_url":
+		return json.Marshal(map[string]any{
+			"type":      "image_url",
+			"image_url": map[string]string{"url": p.ImageURL},
+		})
+	default:
+		return json.Marshal(map[string]any{"type": "text", "text": p.Text})
+	}
+}
+
+func (p *ContentPart) UnmarshalJSON(b []byte) error {
+	var raw struct {
+		Type     string `json:"type"`
+		Text     string `json:"text"`
+		ImageURL *struct {
+			URL string `json:"url"`
+		} `json:"image_url"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	p.Type = raw.Type
+	switch raw.Type {
+	case "image_url":
+		if raw.ImageURL != nil {
+			p.ImageURL = raw.ImageURL.URL
+		}
+	default:
+		p.Text = raw.Text
+	}
+	return nil
+}
+
 // Message is one chat message, in history and on the wire. Reasoning is
-// display-only and never sent back (the API rejects it).
+// display-only and never sent back (the API rejects it). Messages with
+// Parts marshal their content as a multimodal array; plain messages keep
+// the string format.
 type Message struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content,omitempty"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
+	Role       string        `json:"role"`
+	Content    string        `json:"content,omitempty"`
+	Parts      []ContentPart `json:"parts,omitempty"` // 本地形态；线格式见 MarshalJSON
+	ToolCalls  []ToolCall    `json:"tool_calls,omitempty"`
+	ToolCallID string        `json:"tool_call_id,omitempty"`
 
 	Reasoning string `json:"-"`
+}
+
+func (m Message) MarshalJSON() ([]byte, error) {
+	wire := struct {
+		Role       string          `json:"role"`
+		Content    json.RawMessage `json:"content,omitempty"`
+		ToolCalls  []ToolCall      `json:"tool_calls,omitempty"`
+		ToolCallID string          `json:"tool_call_id,omitempty"`
+	}{Role: m.Role, ToolCalls: m.ToolCalls, ToolCallID: m.ToolCallID}
+	if len(m.Parts) > 0 {
+		b, err := json.Marshal(m.Parts)
+		if err != nil {
+			return nil, err
+		}
+		wire.Content = b
+	} else if m.Content != "" {
+		b, err := json.Marshal(m.Content)
+		if err != nil {
+			return nil, err
+		}
+		wire.Content = b
+	}
+	return json.Marshal(wire)
+}
+
+func (m *Message) UnmarshalJSON(b []byte) error {
+	var raw struct {
+		Role       string          `json:"role"`
+		Content    json.RawMessage `json:"content"`
+		ToolCalls  []ToolCall      `json:"tool_calls"`
+		ToolCallID string          `json:"tool_call_id"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	m.Role, m.ToolCalls, m.ToolCallID = raw.Role, raw.ToolCalls, raw.ToolCallID
+	if len(raw.Content) > 0 && string(raw.Content) != "null" {
+		if raw.Content[0] == '[' {
+			return json.Unmarshal(raw.Content, &m.Parts)
+		}
+		return json.Unmarshal(raw.Content, &m.Content)
+	}
+	return nil
 }
 
 // ToolDef describes a tool's JSON schema, as the API expects it.

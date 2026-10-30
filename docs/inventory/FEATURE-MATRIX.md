@@ -99,7 +99,7 @@
 | `client-ui-sidebar-documentpreview` | 文档预览侧栏（含 Office 查看器） | 无 | ❌ | P2 | — |
 | `client-ui-sidebar-right` | 右侧栏（交付物/任务等挂载点） | 无 | ❌ | P2 | — |
 | `client-ui-chat` / `conversation` / `renderer` / `tool` | 聊天时间线/工具卡/Markdown | ✅ 流式 + 工具折叠卡 | ✅ | — | — |
-| `client-ui-attachment` / `dsh-attachment(-local)` / `client-file-upload` | 附件上传与读取（图片 read_image） | 无 | ❌ | P1 | — |
+| `client-ui-attachment` / `dsh-attachment(-local)` / `client-file-upload` | 附件上传与读取（图片 read_image） | 🟡 附件全链路（REQ-011）：＋ 添加（路径/系统对话框）、文本注入 + 图片多模态 content 数组、气泡 chip；附件存储服务/read_image 工具缺 | 🟡 | P1 | REQ-011 |
 | `client-ui-reference` | 输入框 @ 引用 | 无 | ❌ | P1 | — |
 | `dsh-commands` / `client-ui-commands` / `command-compact/-feedback/-goal` | 斜杠命令体系 | 🟡 /help /new /fork /compact /mode /cwd /trajectory | 🟡 | P1 | — |
 | `client-ui-model-selection`(-deepseek-model-label) | 会话内模型快速切换 | ✅ composer 选择器（Popover + /models 拉取 + /model 命令，meta.model 会话级覆盖）（REQ-010） | ✅ | P1 | REQ-010 |
@@ -145,11 +145,11 @@
 | 状态 | 数量（截至 2026-10-30） |
 |---|---|
 | ✅ 已复刻 | 19 |
-| 🟡 部分复刻 | 23 |
-| ❌ 未复刻 | 25 |
+| 🟡 部分复刻 | 24 |
+| ❌ 未复刻 | 24 |
 | ⚪ 不逐包复刻 | 14 |
 
 > 排期建议：~~P0 插件集群（REQ-002~006）~~、~~REQ-007 Shell 输出落盘~~、
-> ~~REQ-008 工作区指令~~、~~REQ-009 后台任务~~、~~REQ-010 会话内模型切换~~（已完成）→
-> P1 继续：附件、快捷键、权限预设、自动标题（逐项立 REQ）。
+> ~~REQ-008 工作区指令~~、~~REQ-009 后台任务~~、~~REQ-010 会话内模型切换~~、
+> ~~REQ-011 附件~~（已完成）→ P1 继续：快捷键、权限预设、自动标题（逐项立 REQ）。
 > 活体核对新增候选：time-context、tool-ask-user、侧栏用量卡（token/calls/费用）。
