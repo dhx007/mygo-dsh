@@ -105,7 +105,7 @@
 | `client-ui-model-selection`(-deepseek-model-label) | 会话内模型快速切换 | ✅ composer 选择器（Popover + /models 拉取 + /model 命令，meta.model 会话级覆盖）（REQ-010） | ✅ | P1 | REQ-010 |
 | `dsh-message-feedback` / `client-ui-message-feedback` | 消息点赞/点踩 | 无 | ❌ | P2 | — |
 | `client-ui-secret-mask` | 秘钥掩码显示 | 无 | ❌ | P2 | — |
-| `dsh-client-shortcuts` / `client-ui-shortcuts` | 键盘快捷键体系 | 无（仅回车发送） | ❌ | P1 | — |
+| `dsh-client-shortcuts` / `client-ui-shortcuts` | 键盘快捷键体系 | 🟡 应用菜单栏加速器（REQ-012）：⌥⌘N 新会话、⌥⌘, 设置、⌘1/2/3 导航 + 编辑角色；应用内非菜单快捷键缺 | 🟡 | P1 | REQ-012 |
 | `client-ui-theme` | 主题 | ✅ 暖黑/深海/森绿 | ✅ | — | — |
 | `client-ui-trajectory` | 轨迹页 | ✅ 逐条检查 | ✅ | — | — |
 | `client-ui-settings(-account/-general/-models/-plugins/-plugin-inventory/-session-log/-shell/-subagent/-web-search/-agent-loop)` | 设置分区 | 🟡 账号/通用/模型/内置插件/预设/归档/Web插件/皮肤/宠物/工坊/统计；shell、子代理、网页搜索、会话日志、agent-loop 分区缺 | 🟡 | P1 | — |
@@ -145,11 +145,11 @@
 | 状态 | 数量（截至 2026-10-30） |
 |---|---|
 | ✅ 已复刻 | 19 |
-| 🟡 部分复刻 | 24 |
-| ❌ 未复刻 | 24 |
+| 🟡 部分复刻 | 25 |
+| ❌ 未复刻 | 23 |
 | ⚪ 不逐包复刻 | 14 |
 
 > 排期建议：~~P0 插件集群（REQ-002~006）~~、~~REQ-007 Shell 输出落盘~~、
 > ~~REQ-008 工作区指令~~、~~REQ-009 后台任务~~、~~REQ-010 会话内模型切换~~、
-> ~~REQ-011 附件~~（已完成）→ P1 继续：快捷键、权限预设、自动标题（逐项立 REQ）。
+> ~~REQ-011 附件~~、~~REQ-012 快捷键~~（已完成）→ P1 继续：权限预设、自动标题（逐项立 REQ）。
 > 活体核对新增候选：time-context、tool-ask-user、侧栏用量卡（token/calls/费用）。

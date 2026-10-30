@@ -29,6 +29,7 @@ func main() {
 			StateKey:  "main",
 			Content:   ui.View(a.view),
 		})
+		mountAppMenu(a)
 	})
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)
