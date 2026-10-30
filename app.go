@@ -43,6 +43,7 @@ var (
 	icoFolder = icon(`<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/>`)
 	icoPlus   = icon(`<path d="M5 12h14M12 5v14"/>`)
 	icoUp     = icon(`<path d="M18 15l-6-6-6 6"/>`)
+	icoShield = icon(`<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>`)
 	icoDown   = icon(`<path d="M6 9l6 6 6-6"/>`)
 	icoUser   = icon(`<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>`)
 	icoGlobe  = icon(`<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>`)
@@ -236,6 +237,9 @@ type app struct {
 	attachMenu   bool
 	attachInput  string
 
+	// REQ-013：权限预设（composer 访问模式）
+	accessMenu bool
+
 	// preset editor
 	epOpen   bool
 	epLabel  string
@@ -424,6 +428,70 @@ func (a *app) switchSessionModel(m string) {
 	a.dropAgent()
 	a.modelMenu = false
 	a.note("本会话模型已切换为 " + m + "（下一条消息生效；全局默认不变）")
+}
+
+// decideApproval applies the permission preset (REQ-013): 只读 denies
+// mutating tools outright, 完全信任 auto-approves, 工作区写入 runs the
+// interactive approval flow via ask.
+func (a *app) decideApproval(ses *Session, toolName, args string, ask func() agent.Decision) agent.Decision {
+	switch a.cfg.accessMode() {
+	case "只读":
+		ses.AppendEvent("approval", map[string]any{"tool": toolName, "decision": "denied-readonly"})
+		return agent.Deny
+	case "完全信任":
+		return agent.AllowOnce
+	}
+	if a.alwaysAllow[toolName] {
+		return agent.AllowOnce
+	}
+	d := ask()
+	if d == agent.AllowAlways {
+		a.alwaysAllow[toolName] = true
+		d = agent.AllowOnce
+	}
+	ses.AppendEvent("approval", map[string]any{"tool": toolName, "args": args, "decision": int(d)})
+	return d
+}
+
+// setAccessMode persists the permission preset (REQ-013).
+func (a *app) setAccessMode(m string) {
+	a.cfg.AccessMode = m
+	a.cfg.AutoApprove = m == "完全信任"
+	_ = saveConfig(a.cfg, a.cfgPath)
+	a.note("访问模式已切换：" + m)
+}
+
+// autoTitleAsync generates an LLM session title from the first user
+// message (the original's session-title-first-prompt-llm strategy); on any
+// error the ellipsis fallback title stays.
+func (a *app) autoTitleAsync(first string) {
+	if strings.TrimSpace(a.cfg.APIKey) == "" {
+		return
+	}
+	client := llm.New(a.cfg.BaseURL, a.cfg.APIKey)
+	ses := a.ses
+	model := a.effectiveModel()
+	go func() {
+		out, err := client.Complete(context.Background(), model,
+			"你为编码助手的对话生成简短中文标题：只输出标题本身，不超过 12 个字，不加引号、句号或前缀。",
+			"对话的第一条用户消息：\n"+first, 24)
+		if err != nil {
+			return
+		}
+		title := strings.TrimSpace(strings.Trim(out, "\"“”''。."))
+		title = strings.Join(strings.Fields(title), " ")
+		if r := []rune(title); len(r) > 24 {
+			title = string(r[:24])
+		}
+		if title == "" {
+			return
+		}
+		a.onMain(func() {
+			ses.Meta.Title = title
+			ses.Touch()
+			a.refreshSessions()
+		})
+	}()
 }
 
 // currentPreset resolves the session's (or default) preset.
@@ -855,6 +923,17 @@ func (a *app) chatTab(c *ui.Context) {
 					if ui.Text(c, "/help 命令").TextColor(t.TextMuted).FontSize(12).Clicked() {
 						a.note("可用命令：/new 新会话 · /compact 压缩历史 · /fork 分叉会话 · /mode <名称> 切换模式 · /model <名> 切换本会话模型 · /cwd <目录> 切换工作区 · /trajectory 轨迹 · /help 本帮助")
 					}
+					// 访问模式（REQ-013）：对齐原版 composer 的 Access mode 控件
+					modeAnchor := ui.Row(c).Gap(4).AlignItems(ui.Center)
+					modeAnchor.Children(func() {
+						ui.Icon(c, icoShield).FontSize(11)
+						ui.Text(c, a.cfg.accessMode()).FontSize(11).TextColor(t.TextMuted)
+						ui.Icon(c, icoDown).FontSize(10)
+					})
+					if modeAnchor.Clicked() {
+						a.accessMenu = !a.accessMenu
+					}
+					ui.Popover(c, modeAnchor, &a.accessMenu, func() { a.accessPopover(c) })
 					ui.Spacer(c)
 					// 会话内模型选择器（REQ-010）：对齐原版 composer 控件
 					modelAnchor := ui.Row(c).Gap(4).AlignItems(ui.Center)
@@ -2217,10 +2296,21 @@ func (a *app) secGeneral(c *ui.Context) {
 		ui.TextInput(c, &a.fWorkDir).Label("默认工作区输入框")
 	})
 	settingsCard(c, "工具权限", func() {
+		checked := a.cfg.accessMode() == "完全信任"
 		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-			ui.Checkbox(c, &a.autoApprove, "")
-			ui.Text(c, "自动批准变更类工具（bash / 写文件 / 编辑）——不再逐次询问").FontSize(13)
+			ui.Checkbox(c, &checked, "")
+			ui.Column(c).Gap(2).Children(func() {
+				ui.Text(c, "完全信任：自动批准变更类工具（bash / 写文件 / 编辑）").FontSize(13)
+				ui.Text(c, "「只读 / 工作区写入」在输入框下方盾牌图标切换").FontSize(11).TextColor(t.TextMuted)
+			})
 		})
+		if checked != (a.cfg.accessMode() == "完全信任") {
+			if checked {
+				a.setAccessMode("完全信任")
+			} else {
+				a.setAccessMode("工作区写入")
+			}
+		}
 	})
 	settingsCard(c, "配置", func() {
 		ui.Text(c, "配置文件路径："+a.cfgPath).TextColor(t.TextMuted).FontSize(12)
@@ -2620,6 +2710,38 @@ func (a *app) stop() {
 	}
 }
 
+// accessPopover is the composer permission-preset menu (REQ-013).
+func (a *app) accessPopover(c *ui.Context) {
+	t := c.Theme()
+	descs := map[string]string{
+		"只读":    "变更类工具一律拒绝",
+		"工作区写入": "变更类工具逐次审批",
+		"完全信任":  "自动批准变更类工具",
+	}
+	ui.Column(c).Width(240).Gap(2).Children(func() {
+		ui.Text(c, "访问模式（权限预设）").TextColor(t.TextMuted).FontSize(11).Padding(4, 6)
+		for _, m := range []string{"只读", "工作区写入", "完全信任"} {
+			mode := m
+			row := ui.Row(c).Gap(8).AlignItems(ui.Center).Padding(6, 8).Radius(8)
+			row.Children(func() {
+				if mode == a.cfg.accessMode() {
+					ui.Text(c, "●").TextColor(t.Accent).FontSize(10)
+				} else {
+					ui.Text(c, "○").TextColor(t.TextMuted).FontSize(10)
+				}
+				ui.Column(c).Gap(1).Children(func() {
+					ui.Text(c, mode).FontSize(12)
+					ui.Text(c, descs[mode]).FontSize(10).TextColor(t.TextMuted)
+				})
+			})
+			if row.Clicked() {
+				a.accessMenu = false
+				a.setAccessMode(mode)
+			}
+		}
+	})
+}
+
 // ---- 附件（REQ-011）----
 
 // pendingAttachment is one file staged for the next outgoing message.
@@ -2810,6 +2932,7 @@ func (a *app) send() {
 	if a.ses.Meta.Title == "新会话" {
 		a.ses.Retitle(ellipsis(text, 24))
 		a.refreshSessions()
+		a.autoTitleAsync(text)
 	}
 	a.nextID++
 	a.msgs = append(a.msgs, &uiMsg{id: a.nextID, role: "user", text: text, files: names, done: true})
@@ -2866,22 +2989,13 @@ func (a *app) send() {
 		},
 		OnStatus: func(s string) { p.add(func() { a.status = s }) },
 		OnApproval: func(toolName, args string) agent.Decision {
-			if a.cfg.AutoApprove {
-				return agent.AllowOnce
-			}
-			if a.alwaysAllow[toolName] {
-				return agent.AllowOnce
-			}
-			ch := make(chan agent.Decision, 1)
-			p.add(func() { a.pending = &pendingApproval{tool: toolName, args: args, ch: ch} })
-			d := <-ch
-			p.add(func() { a.pending = nil })
-			if d == agent.AllowAlways {
-				a.alwaysAllow[toolName] = true
-				d = agent.AllowOnce
-			}
-			ses.AppendEvent("approval", map[string]any{"tool": toolName, "args": args, "decision": int(d)})
-			return d
+			return a.decideApproval(ses, toolName, args, func() agent.Decision {
+				ch := make(chan agent.Decision, 1)
+				p.add(func() { a.pending = &pendingApproval{tool: toolName, args: args, ch: ch} })
+				d := <-ch
+				p.add(func() { a.pending = nil })
+				return d
+			})
 		},
 		OnTodo: func(items []agent.TodoItem) {
 			p.add(func() {

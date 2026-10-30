@@ -31,6 +31,10 @@ type Config struct {
 	// default (60000 / 64000). Output beyond the cap spills to a temp file.
 	ShellTimeoutMS int `json:"shell_timeout_ms,omitempty"`
 	ShellOutputCap int `json:"shell_output_cap,omitempty"`
+	// AccessMode is the permission preset (REQ-013): 只读 | 工作区写入 |
+	// 完全信任; empty = 工作区写入. AutoApprove is the legacy switch,
+	// migrated on load.
+	AccessMode string `json:"access_mode,omitempty"`
 }
 
 func defaultConfig() *Config {
@@ -49,6 +53,9 @@ func defaultConfig() *Config {
 // configPath resolves <user data>/config.json, falling back to the
 // standard user config directory when MyGo's path is not available yet.
 func configPath() string {
+	if dataDirOverride != "" {
+		return filepath.Join(dataDirOverride, "config.json")
+	}
 	dir := userDataDir()
 	if dir == "" {
 		if base, err := os.UserConfigDir(); err == nil {
@@ -93,6 +100,10 @@ func loadConfig() (*Config, string) {
 	if cfg.Mode == "" {
 		cfg.Mode = "标准"
 	}
+	// 旧配置的 auto_approve 迁移为权限预设（REQ-013）
+	if cfg.AccessMode == "" && cfg.AutoApprove {
+		cfg.AccessMode = "完全信任"
+	}
 	return cfg, p
 }
 
@@ -123,6 +134,16 @@ func (c *Config) enabledTool(name string) bool {
 // experimentalOn reports whether an experimental switch is enabled.
 func (c *Config) experimentalOn(name string) bool {
 	return c.Experimental != nil && c.Experimental[name]
+}
+
+// accessMode returns the normalized permission preset.
+func (c *Config) accessMode() string {
+	switch c.AccessMode {
+	case "只读", "完全信任":
+		return c.AccessMode
+	default:
+		return "工作区写入"
+	}
 }
 
 // shellTimeout returns the default bash command timeout, clamped to

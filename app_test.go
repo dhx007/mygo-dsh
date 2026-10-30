@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -581,6 +582,73 @@ func TestComposerAttachUI(t *testing.T) {
 	tt.Frame()
 	if len(a.pendingFiles) != 0 {
 		t.Errorf("attachment not removed: %v", a.pendingFiles)
+	}
+}
+
+// mockChatAndTitle is a dual-mode mock: streaming requests get the SSE
+// reply, non-streaming ones (session titles) get the title completion.
+func mockChatAndTitle(t *testing.T, reply, title string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			Stream bool `json:"stream"`
+		}
+		_ = json.Unmarshal(body, &req)
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		if !req.Stream {
+			w.Header().Set("Content-Type", "application/json")
+			b, _ := json.Marshal(map[string]any{
+				"choices": []map[string]any{{"message": map[string]any{"content": title}}},
+			})
+			_, _ = w.Write(b)
+			return
+		}
+		for _, c := range []string{reply[:len(reply)/2], reply[len(reply)/2:]} {
+			b, _ := json.Marshal(map[string]any{
+				"choices": []map[string]any{{"delta": map[string]any{"content": c}}},
+			})
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+			flusher.Flush()
+		}
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// REQ-014: the first user message triggers an LLM title that replaces the
+// fallback and persists; later messages do not retitle.
+func TestAutoSessionTitle(t *testing.T) {
+	a := newTestApp(t)
+	srv := mockChatAndTitle(t, "好的，我来实现。", "登录功能实现")
+	a.cfg.BaseURL = srv.URL
+	a.cfg.APIKey = "sk-test"
+	tt := ui.NewTester(a.view, 1200, 780)
+	tt.Frame()
+
+	if err := tt.Click("⊕ 新会话"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+
+	a.input = "帮我实现一个登录功能，用 JWT"
+	a.send()
+	waitFor(t, func() bool { return !a.busy }, "send never finished")
+	waitFor(t, func() bool { return a.ses != nil && a.ses.Meta.Title == "登录功能实现" }, "title never applied")
+
+	b, err := os.ReadFile(filepath.Join(a.store.Root, "s", a.ses.Meta.ID, "meta.json"))
+	if err != nil || !strings.Contains(string(b), "登录功能实现") {
+		t.Errorf("title not persisted: err=%v body=%s", err, b)
+	}
+
+	// 第二条消息不重命名
+	a.input = "继续"
+	a.send()
+	waitFor(t, func() bool { return !a.busy }, "second send never finished")
+	if a.ses.Meta.Title != "登录功能实现" {
+		t.Fatalf("title changed by later message: %q", a.ses.Meta.Title)
 	}
 }
 

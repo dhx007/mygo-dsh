@@ -345,3 +345,55 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 	sort.Strings(ids)
 	return ids, nil
 }
+
+// Complete runs one non-streaming chat completion and returns the message
+// content — used for cheap auxiliary calls (session titles, REQ-014).
+func (c *Client) Complete(ctx context.Context, model, system, user string, maxTokens int) (string, error) {
+	if maxTokens <= 0 {
+		maxTokens = 24
+	}
+	body := Request{
+		Model: model,
+		Messages: []Message{
+			{Role: "system", Content: system},
+			{Role: "user", Content: user},
+		},
+		MaxTokens: maxTokens,
+	}
+	b, err := json.Marshal(body)
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(b))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	httpResp, err := c.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer httpResp.Body.Close()
+	respBody, err := io.ReadAll(io.LimitReader(httpResp.Body, 1024*1024))
+	if err != nil {
+		return "", err
+	}
+	if httpResp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("HTTP %d: %s", httpResp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	var res struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(respBody, &res); err != nil {
+		return "", err
+	}
+	if len(res.Choices) == 0 {
+		return "", fmt.Errorf("无补全结果")
+	}
+	return res.Choices[0].Message.Content, nil
+}

@@ -16,7 +16,7 @@
 | `dsh-session-format`(+catalog, v0→v4) | 会话格式版本化与迁移 | 无版本概念 | ❌ | P2 | — |
 | `dsh-session-projection`(+cache) | 会话投影缓存（快速列表/装载） | 直接扫 meta.json | 🟡 | P2 | — |
 | `dsh-session-query`(+sqlite, tool-session-query) | 会话 SQL 查询（模型可查历史） | 无 | ❌ | P2 | — |
-| `dsh-session-title`(+first-prompt/all-prompts/llm, experimental-session-titles-bundle) | LLM 自动起标题 | 首行截断 24 字 | ❌ | P1 | — |
+| `dsh-session-title`(+first-prompt/all-prompts/llm, experimental-session-titles-bundle) | LLM 自动起标题 | 🟡 first-prompt-llm 策略（REQ-014）：首条消息异步生成标题覆盖兜底并落盘；跟随式刷新/all-prompts 缺 | 🟡 | P1 | REQ-014 |
 | `dsh-session-turn-outline` | 轮次大纲 | 无 | ❌ | P2 | — |
 | `dsh-session-checkpoint-policy` | 会话检查点/回滚 | 无（有 fork） | ❌ | P2 | — |
 | `dsh-session-log-deepseek` / `session-log-export` | 会话日志导出 | 无 | ❌ | P2 | — |
@@ -39,7 +39,7 @@
 | `dsh-plan-mode` / `client-ui-plan` | 计划模式（只读规划→批准→执行） | 无 | ❌ | P1 | — |
 | `dsh-goal`(+round-driver, tool-goal, client-ui-goal, command-goal) | 目标驱动多轮循环 | 无 | ❌ | P2 | — |
 | `dsh-user-approval` / `client-ui-approval` | 工具审批 | ✅ 允许一次/总是/拒绝 | ✅ | — | — |
-| `dsh-permission-presets` / `client-ui-permission-presets` | 权限预设（按工具/规则批量授权） | 仅全局自动审批 | ❌ | P1 | — |
+| `dsh-permission-presets` / `client-ui-permission-presets` | 权限预设（按工具/规则批量授权） | 🟡 三档访问模式（REQ-013）：只读/工作区写入/完全信任，composer 控件 + 旧配置迁移；路径沙箱与工具隐藏缺 | 🟡 | P1 | REQ-013 |
 | `dsh-user-questions` / `tool-ask-user` / `client-ui-user-questions` | 模型向用户提问（选择题） | 无 | ❌ | P1 | — |
 | `dsh-subagent`(+spawn/fork-in-process, tool-subagent, -control, client-ui-subagent) | 子代理（生成/分叉/控制） | ✅ `task` 一层深；fork 即会话分叉；控制（暂停/多代理）缺 | 🟡 | P1 | — |
 | `dsh-compaction`(+basic/image-offload/tool-result-pruner) | 历史压缩 | ✅ `/compact` 简版（无图片卸载/工具结果裁剪） | 🟡 | P2 | — |
@@ -145,11 +145,12 @@
 | 状态 | 数量（截至 2026-10-30） |
 |---|---|
 | ✅ 已复刻 | 19 |
-| 🟡 部分复刻 | 25 |
-| ❌ 未复刻 | 23 |
+| 🟡 部分复刻 | 27 |
+| ❌ 未复刻 | 21 |
 | ⚪ 不逐包复刻 | 14 |
 
-> 排期建议：~~P0 插件集群（REQ-002~006）~~、~~REQ-007 Shell 输出落盘~~、
-> ~~REQ-008 工作区指令~~、~~REQ-009 后台任务~~、~~REQ-010 会话内模型切换~~、
-> ~~REQ-011 附件~~、~~REQ-012 快捷键~~（已完成）→ P1 继续：权限预设、自动标题（逐项立 REQ）。
+> 排期建议：~~P0 插件集群（REQ-002~006）~~、~~P1 体验集群（REQ-007~014：Shell 落盘/
+> 工作区指令/后台任务/模型切换/附件/快捷键/权限预设/自动标题）~~**全部交付** →
+> 下一批候选：计划模式（plan-mode）、tool-ask-user、tool-schedule、time-context、
+> 侧栏用量卡、终端面板、工作流编排（逐项立 REQ，见各 TEST 报告遗留项）。
 > 活体核对新增候选：time-context、tool-ask-user、侧栏用量卡（token/calls/费用）。
