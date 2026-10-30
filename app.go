@@ -237,6 +237,10 @@ type app struct {
 	attachMenu   bool
 	attachInput  string
 
+	// REQ-015：用量统计
+	usageAll     map[string]*usageDay
+	usageUpdated time.Time
+
 	// REQ-013：权限预设（composer 访问模式）
 	accessMenu bool
 
@@ -293,6 +297,8 @@ func newApp() *app {
 	a.refreshSessions()
 	a.refreshPackages()
 	a.mcp = newMCPManager(dir)
+	a.usageAll = loadUsage(dir)
+	a.setSection = "账号与余额"
 	// Shell 设置卡初值与 tools 包同步（REQ-007）
 	if cfg.ShellTimeoutMS > 0 {
 		a.fShellTimeout = strconv.Itoa(cfg.ShellTimeoutMS)
@@ -494,6 +500,69 @@ func (a *app) autoTitleAsync(first string) {
 	}()
 }
 
+// recordUsage accumulates one call's usage into today's bucket and
+// persists (REQ-015). Called from agent goroutines; state changes go
+// through onMain.
+func (a *app) recordUsage(u llm.Usage) {
+	a.onMain(func() {
+		key := todayKey()
+		d := a.usageAll[key]
+		if d == nil {
+			d = &usageDay{}
+			a.usageAll[key] = d
+		}
+		d.Calls++
+		d.PromptTokens += u.PromptTokens
+		d.CompletionTokens += u.CompletionTokens
+		a.usageUpdated = time.Now()
+		_ = saveUsage(a.dataDir, a.usageAll)
+	})
+}
+
+// usageCard is the sidebar's daily usage summary (REQ-015), mirroring the
+// original's Today / tokens / calls / cost card.
+func (a *app) usageCard(c *ui.Context) {
+	t := c.Theme()
+	day := a.usageAll[todayKey()]
+	if day == nil {
+		day = &usageDay{}
+	}
+	ui.Column(c).Gap(4).Padding(8, 10).Radius(10).Background(t.Background).Children(func() {
+		todayRow := ui.Row(c).Gap(6).AlignItems(ui.Center)
+		todayRow.Children(func() {
+			ui.Text(c, "Today").Bold().FontSize(11).TextColor(t.TextMuted)
+			ui.Spacer(c)
+			if a.cfg.UsageCollapsed {
+				ui.Icon(c, icoUp).FontSize(10)
+			} else {
+				ui.Icon(c, icoDown).FontSize(10)
+			}
+		})
+		if todayRow.Clicked() {
+			a.cfg.UsageCollapsed = !a.cfg.UsageCollapsed
+			_ = saveConfig(a.cfg, a.cfgPath)
+		}
+		if a.cfg.UsageCollapsed {
+			return
+		}
+		stats := ui.Text(c, fmt.Sprintf("%s tokens · %d calls", fmtTokens(day.PromptTokens+day.CompletionTokens), day.Calls)).
+			FontSize(12)
+		if stats.Clicked() {
+			a.setSection = "使用统计"
+			if !a.statsLoaded && !a.statsLoading {
+				go a.fetchStats()
+			}
+			a.openSettings()
+		}
+		updated := ""
+		if !a.usageUpdated.IsZero() {
+			updated = fmt.Sprintf(" · Updated %s", a.usageUpdated.Format("15:04"))
+		}
+		ui.Text(c, fmt.Sprintf("DeepSeek ¥%.2f（估算）%s", estimateCost(*day), updated)).
+			FontSize(10).TextColor(t.TextMuted)
+	})
+}
+
 // currentPreset resolves the session's (or default) preset.
 func (a *app) currentPreset() *Preset {
 	mode := a.cfg.Mode
@@ -599,8 +668,9 @@ func (a *app) sidebar(c *ui.Context) {
 				a.focusComposer = 2
 			}
 		}
-		// 底部：状态行 + 用户行（点击弹出菜单）
+		// 底部：用量卡（REQ-015）+ 状态行 + 用户行（点击弹出菜单）
 		ui.Column(c).Padding(8, 16, 10).Gap(6).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Children(func() {
+			a.usageCard(c)
 			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 				ui.Icon(c, icoChat).FontSize(11)
 				ui.Text(c, "本地模式").TextColor(t.TextMuted).FontSize(11)
@@ -2047,7 +2117,7 @@ func (a *app) openSettings() {
 		a.settingsWin.Focus()
 		return
 	}
-	a.setSection = "账号与余额"
+	// a.setSection 保持上次分区（newApp 默认账号与余额；用量卡等入口可预设）
 	if strings.TrimSpace(a.cfg.APIKey) != "" && !a.balFetched && !a.balLoading {
 		go a.fetchBalance()
 	}
@@ -3122,6 +3192,7 @@ func (a *app) newAgentFor(ses *Session) *agent.Agent {
 		WorkDir:      ses.Meta.Workspace,
 		Specs:        specs,
 	}
+	base.Client.OnUsage = a.recordUsage
 	// 持久 shell：极简（或自定义）preset 自带，或实验开关「持久终端」全局开启
 	hasBash := false
 	for _, n := range preset.Tools {

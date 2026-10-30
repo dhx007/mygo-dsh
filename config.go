@@ -35,6 +35,8 @@ type Config struct {
 	// 完全信任; empty = 工作区写入. AutoApprove is the legacy switch,
 	// migrated on load.
 	AccessMode string `json:"access_mode,omitempty"`
+	// UsageCollapsed hides the sidebar usage card body (REQ-015).
+	UsageCollapsed bool `json:"usage_collapsed,omitempty"`
 }
 
 func defaultConfig() *Config {

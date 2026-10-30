@@ -15,6 +15,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
+	"mygo-harness/internal/llm"
 	"mygo-harness/internal/tools"
 )
 
@@ -649,6 +650,59 @@ func TestAutoSessionTitle(t *testing.T) {
 	waitFor(t, func() bool { return !a.busy }, "second send never finished")
 	if a.ses.Meta.Title != "登录功能实现" {
 		t.Fatalf("title changed by later message: %q", a.ses.Meta.Title)
+	}
+}
+
+// REQ-015 AC-3: the sidebar usage card shows Today/tokens/calls/cost,
+// opens the usage stats settings, and collapses persistently.
+func TestUsageCardUI(t *testing.T) {
+	a := newTestApp(t)
+	tt := ui.NewTester(a.view, 1200, 780)
+	tt.Frame()
+
+	a.recordUsage(llm.Usage{PromptTokens: 1000, CompletionTokens: 500, TotalTokens: 1500})
+	a.recordUsage(llm.Usage{PromptTokens: 100, CompletionTokens: 50, TotalTokens: 150})
+	tt.Frame()
+
+	if !tt.HasText("Today") || !tt.HasText("1.6K tokens · 2 calls") {
+		t.Errorf("usage card missing (texts=%v)", tt.Texts())
+	}
+	if !tt.HasText("DeepSeek ¥0.01（估算）") {
+		t.Errorf("cost line missing (texts=%v)", tt.Texts())
+	}
+
+	// 点击统计行 → 打开设置·使用统计
+	if err := tt.Click("1.6K tokens · 2 calls"); err != nil {
+		t.Fatalf("click stats: %v (texts=%v)", err, tt.Texts())
+	}
+	tt.Frame()
+	if a.page != "settings" && a.settingsWin == nil {
+		t.Errorf("stats click did not open settings: page=%q", a.page)
+	}
+	if a.setSection != "使用统计" {
+		t.Errorf("section = %q, want 使用统计", a.setSection)
+	}
+
+	// 折叠 / 展开
+	a.page = "chat"
+	tt.Frame()
+	if err := tt.Click("Today"); err != nil {
+		t.Fatalf("collapse: %v", err)
+	}
+	tt.Frame()
+	if !a.cfg.UsageCollapsed || tt.HasText("2 calls") {
+		t.Errorf("collapse failed: cfg=%v", a.cfg.UsageCollapsed)
+	}
+	b, err := os.ReadFile(a.cfgPath)
+	if err != nil || !strings.Contains(string(b), `"usage_collapsed": true`) {
+		t.Errorf("collapse not persisted: err=%v body=%s", err, b)
+	}
+	if err := tt.Click("Today"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if !tt.HasText("2 calls") {
+		t.Errorf("expand failed (texts=%v)", tt.Texts())
 	}
 }
 

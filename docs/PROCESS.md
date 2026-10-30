@@ -95,7 +95,8 @@
   文本注入 + 图片多模态 content 数组、llm.Message 多模态序列化）；
   REQ-012 快捷键（应用菜单栏加速器 ⌥⌘N/⌥⌘,/⌘1-3 + 编辑角色）；
   REQ-013 权限预设（只读/工作区写入/完全信任三档，composer 访问模式控件 + 旧配置迁移）；
-  REQ-014 LLM 自动会话标题（first-prompt-llm 策略，异步覆盖兜底标题）。
+  REQ-014 LLM 自动会话标题（first-prompt-llm 策略，异步覆盖兜底标题）；
+  REQ-015 侧栏用量卡（llm usage 捕获 + 按天累计落盘 + Today/tokens/calls/估算费用卡）。
 - **P1 体验集群（REQ-007~014）全部交付。**
 - 活体 UI 核对已完成一轮（`docs/evidence/LIVE-UI-2026-10-30.md`），结构类假设已对齐。
 - 下一批（待立 REQ，按 FEATURE-MATRIX P1 排）：agent-instructions（AGENTS.md/CLAUDE.md）、

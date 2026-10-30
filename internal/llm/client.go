@@ -139,6 +139,12 @@ type ToolSpec struct {
 	Function ToolDef `json:"function"`
 }
 
+// StreamOptions asks the provider to include usage in the streaming tail
+// chunk (OpenAI-compatible stream_options).
+type StreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
+}
+
 // Request is a chat-completions request body.
 type Request struct {
 	Model       string     `json:"model"`
@@ -147,6 +153,8 @@ type Request struct {
 	Stream      bool       `json:"stream"`
 	Temperature float64    `json:"temperature,omitempty"`
 	MaxTokens   int        `json:"max_tokens,omitempty"`
+
+	StreamOptions *StreamOptions `json:"stream_options,omitempty"`
 }
 
 // StreamHandler receives deltas as they arrive, on the caller's goroutine.
@@ -160,6 +168,9 @@ type Client struct {
 	baseURL string
 	apiKey  string
 	http    *http.Client
+	// OnUsage, when set, is called once per finished call with the token
+	// usage reported by the provider (REQ-015).
+	OnUsage func(Usage)
 }
 
 // New builds a client; baseURL defaults to the DeepSeek API.
@@ -182,6 +193,14 @@ func New(baseURL, apiKey string) *Client {
 	}
 }
 
+// Usage is the token accounting of one API call, reported via
+// Client.OnUsage (REQ-015).
+type Usage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
 type streamEvent struct {
 	Choices []struct {
 		Delta struct {
@@ -200,6 +219,7 @@ type streamEvent struct {
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
+	Usage *Usage `json:"usage,omitempty"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
@@ -210,6 +230,7 @@ type streamEvent struct {
 // message and the context error.
 func (c *Client) Chat(ctx context.Context, req Request, h StreamHandler) (Message, error) {
 	req.Stream = true
+	req.StreamOptions = &StreamOptions{IncludeUsage: true}
 	body, err := json.Marshal(req)
 	if err != nil {
 		return Message{}, err
@@ -234,6 +255,12 @@ func (c *Client) Chat(ctx context.Context, req Request, h StreamHandler) (Messag
 	}
 
 	out := Message{Role: "assistant"}
+	var lastUsage *Usage
+	defer func() {
+		if lastUsage != nil && c.OnUsage != nil {
+			c.OnUsage(*lastUsage)
+		}
+	}()
 	calls := map[int]*ToolCall{}
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
@@ -252,6 +279,9 @@ func (c *Client) Chat(ctx context.Context, req Request, h StreamHandler) (Messag
 		}
 		if evt.Error != nil && evt.Error.Message != "" {
 			return out, fmt.Errorf("API 流错误: %s", evt.Error.Message)
+		}
+		if evt.Usage != nil {
+			lastUsage = evt.Usage // 尾块：choices 为空但带 usage
 		}
 		if len(evt.Choices) == 0 {
 			continue
@@ -388,9 +418,13 @@ func (c *Client) Complete(ctx context.Context, model, system, user string, maxTo
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
+		Usage *Usage `json:"usage"`
 	}
 	if err := json.Unmarshal(respBody, &res); err != nil {
 		return "", err
+	}
+	if res.Usage != nil && c.OnUsage != nil {
+		c.OnUsage(*res.Usage)
 	}
 	if len(res.Choices) == 0 {
 		return "", fmt.Errorf("无补全结果")
